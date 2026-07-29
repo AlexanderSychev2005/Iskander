@@ -40,7 +40,7 @@ class AkkadianPhysicalCollator:
         valid_indices = [i for i, t in enumerate(tokens) if t not in special_ids]
         
         if not valid_indices:
-            return tokens, [-100]*len(tokens), [-100]*len(tokens)
+            return torch.tensor(tokens), torch.tensor([-100]*len(tokens)), torch.tensor([-100]*len(tokens))
             
         # 2. Pick ONE compressed gap [#]
         span_len = int(np.random.geometric(self.unk_geometric_p)) - 1
