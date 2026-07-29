@@ -59,6 +59,11 @@ class CharacterTokenizer:
             json.dump(self.vocab, f, ensure_ascii=False, indent=2)
         print(f"Vocabulary saved to {vocab_path} (Size: {len(self.vocab)})")
         
+    def save_pretrained(self, save_directory):
+        """Hugging Face Trainer compatibility."""
+        os.makedirs(save_directory, exist_ok=True)
+        self.save(os.path.join(save_directory, "vocab.json"))
+        
     def load(self, vocab_path):
         """Loads vocabulary from a JSON file."""
         with open(vocab_path, 'r', encoding='utf-8') as f:
