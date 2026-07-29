@@ -141,9 +141,27 @@ class AkkadianPhysicalCollator:
         
         return batch
 
+def preprocess_logits_for_metrics(logits, labels):
+    # logits: (mlm_logits, unk_logits, emb, period, prov, genre, ruler, lang)
+    # To save memory, we reduce logits to predictions before accumulating
+    
+    # 1. MLM: Keep Top-5 indices (B, S, 5)
+    mlm_top5 = torch.topk(logits[0], k=5, dim=-1).indices
+    
+    # 2. UNK: Keep Top-1 (B, S)
+    unk_top1 = torch.argmax(logits[1], dim=-1)
+    
+    # 3. Metadata: Keep Top-1 (B,)
+    meta_preds = []
+    for i in range(3, 8): # period to lang
+        meta_preds.append(torch.argmax(logits[i], dim=-1))
+        
+    return mlm_top5, unk_top1, *meta_preds
+
 def compute_metrics(eval_pred):
-    # eval_pred.predictions: (logits, logits_unk, emb_context, period_logits, ...)
-    # eval_pred.label_ids: (labels, unk_labels, period_labels, ...)
+    # eval_pred.predictions are now from preprocess_logits_for_metrics
+    # (mlm_top5, unk_top1, period_top1, prov_top1, genre_top1, ruler_top1, lang_top1)
+    # eval_pred.label_ids: (labels, unk_labels, period_labels, prov_labels, genre_labels, ruler_labels, lang_labels)
     preds = eval_pred.predictions
     label_ids = eval_pred.label_ids
     
@@ -152,10 +170,9 @@ def compute_metrics(eval_pred):
     # Names for the 5 metadata tasks
     task_names = ["period", "prov", "genre", "ruler", "lang"]
     
-    # Metadata metrics (preds indices 3 to 7, label_ids indices 2 to 6)
+    # Metadata metrics (preds indices 2 to 6, label_ids indices 2 to 6)
     for i in range(2, 7):
-        pred_idx = i + 1 # shift by 1 because of emb_context
-        task_preds = preds[pred_idx].reshape(-1, preds[pred_idx].shape[-1])
+        task_preds = preds[i].reshape(-1)
         task_labels = label_ids[i].reshape(-1)
         
         mask = task_labels != -100
@@ -167,43 +184,38 @@ def compute_metrics(eval_pred):
         task_preds = task_preds[mask]
         task_labels = task_labels[mask]
         
-        pred_classes = np.argmax(task_preds, axis=-1)
-        metrics[f"{task_names[i-2]}_acc"] = float((pred_classes == task_labels).mean())
-        metrics[f"{task_names[i-2]}_macro_f1"] = float(f1_score(task_labels, pred_classes, average="macro", zero_division=0))
+        metrics[f"{task_names[i-2]}_acc"] = float((task_preds == task_labels).mean())
+        metrics[f"{task_names[i-2]}_macro_f1"] = float(f1_score(task_labels, task_preds, average="macro", zero_division=0))
         
     # MLM accuracy (Top-1, Top-3, Top-5)
-    mlm_preds = preds[0].reshape(-1, preds[0].shape[-1])
+    mlm_preds = preds[0].reshape(-1, 5) # (B*S, 5)
     mlm_labels = label_ids[0].reshape(-1)
     mlm_mask = mlm_labels != -100
     if mlm_mask.any():
         masked_preds = mlm_preds[mlm_mask]
         masked_labels = mlm_labels[mlm_mask]
         
-        mlm_pred_classes = np.argmax(masked_preds, axis=-1)
-        mlm_acc = float((mlm_pred_classes == masked_labels).mean())
+        # Top-1 is just the first element in the top-5
+        mlm_acc = float((masked_preds[:, 0] == masked_labels).mean())
         metrics["mlm_acc"] = mlm_acc
         
-        top3_preds = np.argsort(masked_preds, axis=-1)[:, -3:]
-        metrics["mlm_top3_acc"] = float(np.any(top3_preds == masked_labels[:, None], axis=1).mean())
-        
-        top5_preds = np.argsort(masked_preds, axis=-1)[:, -5:]
-        metrics["mlm_top5_acc"] = float(np.any(top5_preds == masked_labels[:, None], axis=1).mean())
+        metrics["mlm_top3_acc"] = float(np.any(masked_preds[:, :3] == masked_labels[:, None], axis=1).mean())
+        metrics["mlm_top5_acc"] = float(np.any(masked_preds == masked_labels[:, None], axis=1).mean())
     else:
         metrics["mlm_acc"] = 0.0
         metrics["mlm_top3_acc"] = 0.0
         metrics["mlm_top5_acc"] = 0.0
         
-    # UNK Head (Gap Expansion) Accuracy and F1
-    unk_preds = preds[1].reshape(-1, 2)
+    # UNK Head Accuracy and F1
+    unk_preds = preds[1].reshape(-1)
     unk_labels = label_ids[1].reshape(-1)
     unk_mask = unk_labels != -100
     if unk_mask.any():
         masked_unk_preds = unk_preds[unk_mask]
         masked_unk_labels = unk_labels[unk_mask]
-        unk_pred_classes = np.argmax(masked_unk_preds, axis=-1)
         
-        metrics["unk_acc"] = float((unk_pred_classes == masked_unk_labels).mean())
-        metrics["unk_macro_f1"] = float(f1_score(masked_unk_labels, unk_pred_classes, average="macro", zero_division=0))
+        metrics["unk_acc"] = float((masked_unk_preds == masked_unk_labels).mean())
+        metrics["unk_macro_f1"] = float(f1_score(masked_unk_labels, masked_unk_preds, average="macro", zero_division=0))
     else:
         metrics["unk_acc"] = 0.0
         metrics["unk_macro_f1"] = 0.0
@@ -291,7 +303,8 @@ def train():
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=collator,
-        compute_metrics=compute_metrics
+        compute_metrics=compute_metrics,
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics
     )
     
     logger.info("Starting training with Hugging Face Trainer...")
