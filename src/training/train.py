@@ -221,6 +221,9 @@ def train():
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
     parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
     parser.add_argument("--eval_steps", type=int, default=500, help="Evaluate and save every N steps")
+    parser.add_argument("--hidden_size", type=int, default=768, help="Hidden size for the transformer")
+    parser.add_argument("--num_layers", type=int, default=12, help="Number of hidden layers")
+    parser.add_argument("--num_heads", type=int, default=12, help="Number of attention heads")
     args = parser.parse_args()
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -258,7 +261,7 @@ def train():
     collator = AkkadianPhysicalCollator(tokenizer)
     
     logger.info("Initializing model...")
-    model = AkkadianModel(vocab_size=len(tokenizer.vocab), hidden_size=768, num_hidden_layers=12, num_attention_heads=12)
+    model = AkkadianModel(vocab_size=len(tokenizer.vocab), hidden_size=args.hidden_size, num_hidden_layers=args.num_layers, num_attention_heads=args.num_heads)
     
     training_args = TrainingArguments(
         output_dir=args.save_dir,
