@@ -3,6 +3,9 @@ import torch
 import argparse
 import random
 import numpy as np
+import json
+import logging
+from datetime import datetime
 from sklearn.metrics import f1_score
 from transformers import Trainer, TrainingArguments
 from datasets import load_from_disk, load_dataset
@@ -223,11 +226,26 @@ def train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
+    os.makedirs(args.save_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler(os.path.join(args.save_dir, f"training_log_{timestamp}.txt")),
+            logging.StreamHandler()
+        ]
+    )
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"Using device: {device}")
+    
     vocab_file = args.vocab_file
     tokenizer = CharacterTokenizer()
     tokenizer.load(vocab_file)
     
-    print(f"Loading datasets from {args.data_dir}...")
+    logger.info(f"Loading datasets from {args.data_dir}...")
     if "/" in args.data_dir and not os.path.exists(args.data_dir):
         hf_ds = load_dataset(args.data_dir)
     else:
@@ -235,11 +253,11 @@ def train():
         
     train_dataset = hf_ds["train"]
     val_dataset = hf_ds["validation"]
-    print(f"Loaded {len(train_dataset)} training samples.")
+    logger.info(f"Loaded {len(train_dataset)} training samples.")
     
     collator = AkkadianPhysicalCollator(tokenizer)
     
-    print("Initializing model...")
+    logger.info("Initializing model...")
     model = AkkadianModel(vocab_size=len(tokenizer.vocab), hidden_size=768, num_hidden_layers=12, num_attention_heads=12)
     
     training_args = TrainingArguments(
@@ -273,8 +291,15 @@ def train():
         compute_metrics=compute_metrics
     )
     
-    print("Starting training with Hugging Face Trainer...")
+    logger.info("Starting training with Hugging Face Trainer...")
     trainer.train()
+    
+    logger.info("Training complete. Saving final state and metrics...")
+    trainer.save_model(os.path.join(args.save_dir, "final_model"))
+    
+    with open(os.path.join(args.save_dir, f"training_history_{timestamp}.json"), "w", encoding="utf-8") as f:
+        json.dump(trainer.state.log_history, f, indent=2, ensure_ascii=False)
+    logger.info("History saved.")
     
 if __name__ == "__main__":
     train()
