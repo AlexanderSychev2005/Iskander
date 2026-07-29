@@ -210,7 +210,7 @@ def compute_metrics(eval_pred):
 def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default=r"C:\Programming\akkadian\data\ready_for_training\hf_dataset", help="Path to jsonl datasets or HF Repo ID")
-    parser.add_argument("--vocab_file", type=str, default=r"C:\Programming\akkadian\data\ready_for_training\vocab.json", help="Path to vocab.json")
+    parser.add_argument("--vocab_file", type=str, default=os.path.join(os.path.dirname(__file__), "vocab.json"), help="Path to vocab.json")
     parser.add_argument("--save_dir", type=str, default="checkpoints", help="Where to save checkpoints and logs")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
     parser.add_argument("--grad_accum", type=int, default=4, help="Gradient accumulation steps")
