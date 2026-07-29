@@ -136,6 +136,23 @@ class AkkadianModel(nn.Module):
         self.ruler_head = nn.Linear(hidden_size, 11)
         self.lang_head = nn.Linear(hidden_size, 5)
         
+        # Apply strict BERT initialization
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        """Initialize the weights properly for deep Transformers."""
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=0.02)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=0.02)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, nn.LayerNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+            
     def forward(self, input_ids, labels=None, unk_labels=None, period_labels=None, provenience_labels=None, genre_labels=None, ruler_labels=None, language_labels=None, return_dict=True):
         # 1. Text Features (Чистые посимвольные эмбеддинги, без абсолютных позиций)
         x = self.char_embeddings(input_ids)
