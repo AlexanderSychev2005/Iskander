@@ -291,7 +291,7 @@ def train():
         torch_compile=torch.cuda.is_available(), # T4 Tensor Core optimization
         dataloader_num_workers=args.num_workers,
         report_to="none",
-        label_names=["labels", "unk_labels", "period_labels", "provenience_labels", "genre_labels", "ruler_labels", "language_labels"]
+        label_names=["labels", "unk_labels", "period_labels", "genre_labels"]
     )
     
     trainer = Trainer(

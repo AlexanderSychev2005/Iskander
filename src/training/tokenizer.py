@@ -7,19 +7,22 @@ class CharacterTokenizer:
         self.vocab = {}
         self.inverse_vocab = {}
         
-        # Special tokens
         self.pad_token = '[PAD]'
         self.unk_token = '[UNK]'
         self.mask_token = '[MASK]'
         self.cls_token = '[CLS]'
         self.sep_token = '[SEP]'
+        self.hash_token = '[#]'
+        self.x_token = 'x'
         
         self.special_tokens = [
             self.pad_token,
             self.unk_token,
             self.mask_token,
             self.cls_token,
-            self.sep_token
+            self.sep_token,
+            self.hash_token,
+            self.x_token
         ]
         
         # Initialize vocab with special tokens
