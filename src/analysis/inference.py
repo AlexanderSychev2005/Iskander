@@ -23,15 +23,18 @@ class AkkadianPredictor:
             vocab_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "training", "vocab.json")
         self.tokenizer.load(vocab_file)
         
-        # Determine model config (assume standard base model for now)
-        # Note: If you train a larger model on AMD, change these numbers
+        # Note: Updated to AMD model parameters
         self.model = AkkadianModel(
             vocab_size=len(self.tokenizer.vocab), 
-            hidden_size=768, 
-            num_hidden_layers=12, 
-            num_attention_heads=12
+            hidden_size=1024, 
+            num_hidden_layers=16, 
+            num_attention_heads=16
         )
-        state_dict = torch.load(os.path.join(checkpoint_path, "pytorch_model.bin"), map_location="cpu")
+        try:
+            from safetensors.torch import load_file
+            state_dict = load_file(os.path.join(checkpoint_path, "model.safetensors"))
+        except (ImportError, FileNotFoundError):
+            state_dict = torch.load(os.path.join(checkpoint_path, "pytorch_model.bin"), map_location="cpu")
         self.model.load_state_dict(state_dict)
         self.model.to(self.device)
         self.model.eval()
@@ -86,7 +89,7 @@ class AkkadianPredictor:
                     
                     t_input = torch.tensor([current_ids[:128]], dtype=torch.long, device=self.device)
                     with torch.no_grad():
-                        outputs = self.model(t_input)
+                        outputs = self.model(t_input, return_dict=False)
                         unk_logits = outputs[1][0] # (S, 2)
                         
                     # Did the model predict to stop (0) or continue (1) expanding at the newly inserted [#]?
@@ -111,7 +114,7 @@ class AkkadianPredictor:
         with torch.no_grad():
             while mask_indices:
                 t_input = torch.tensor([current_ids[:128]], dtype=torch.long, device=self.device)
-                outputs = self.model(t_input)
+                outputs = self.model(t_input, return_dict=False)
                 mlm_logits = outputs[0][0] # (S, V)
                 
                 best_idx = -1

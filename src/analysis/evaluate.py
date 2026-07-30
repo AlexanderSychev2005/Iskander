@@ -50,7 +50,7 @@ def evaluate_top_k(predictor, dataset, batch_size=64):
             
         t_input = torch.tensor(corrupted_batch, dtype=torch.long, device=predictor.device)
         with torch.no_grad():
-            outputs = predictor.model(t_input)
+            outputs = predictor.model(t_input, return_dict=False)
             mlm_logits = outputs[0] # (B, S, V)
             
             for b_idx in range(len(corrupted_batch)):

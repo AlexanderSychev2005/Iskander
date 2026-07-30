@@ -133,10 +133,7 @@ class AkkadianPhysicalCollator:
             "labels": torch.stack(b_labels_res),
             "unk_labels": torch.stack(b_labels_unk),
             "period_labels": torch.tensor([ex["period_labels"] for ex in examples], dtype=torch.long),
-            "provenience_labels": torch.tensor([ex["provenience_labels"] for ex in examples], dtype=torch.long),
             "genre_labels": torch.tensor([ex["genre_labels"] for ex in examples], dtype=torch.long),
-            "ruler_labels": torch.tensor([ex["ruler_labels"] for ex in examples], dtype=torch.long),
-            "language_labels": torch.tensor([ex["language_labels"] for ex in examples], dtype=torch.long),
         }
         
         return batch
@@ -153,25 +150,25 @@ def preprocess_logits_for_metrics(logits, labels):
     
     # 3. Metadata: Keep Top-1 (B,)
     meta_preds = []
-    for i in range(3, 8): # period to lang
+    for i in range(3, 5): # period and genre
         meta_preds.append(torch.argmax(logits[i], dim=-1))
         
     return mlm_top5, unk_top1, *meta_preds
 
 def compute_metrics(eval_pred):
     # eval_pred.predictions are now from preprocess_logits_for_metrics
-    # (mlm_top5, unk_top1, period_top1, prov_top1, genre_top1, ruler_top1, lang_top1)
-    # eval_pred.label_ids: (labels, unk_labels, period_labels, prov_labels, genre_labels, ruler_labels, lang_labels)
+    # (mlm_top5, unk_top1, period_top1, genre_top1)
+    # eval_pred.label_ids: (labels, unk_labels, period_labels, genre_labels)
     preds = eval_pred.predictions
     label_ids = eval_pred.label_ids
     
     metrics = {}
     
-    # Names for the 5 metadata tasks
-    task_names = ["period", "prov", "genre", "ruler", "lang"]
+    # Names for the 2 metadata tasks
+    task_names = ["period", "genre"]
     
-    # Metadata metrics (preds indices 2 to 6, label_ids indices 2 to 6)
-    for i in range(2, 7):
+    # Metadata metrics (preds indices 2 to 3, label_ids indices 2 to 3)
+    for i in range(2, 4):
         task_preds = preds[i].reshape(-1)
         task_labels = label_ids[i].reshape(-1)
         
@@ -231,11 +228,11 @@ def train():
     parser.add_argument("--grad_accum", type=int, default=4, help="Gradient accumulation steps")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of CPU workers")
     parser.add_argument("--lr", type=float, default=3e-4, help="Learning rate")
-    parser.add_argument("--epochs", type=int, default=10, help="Number of epochs")
+    parser.add_argument("--epochs", type=int, default=50, help="Number of epochs")
     parser.add_argument("--eval_steps", type=int, default=500, help="Evaluate and save every N steps")
-    parser.add_argument("--hidden_size", type=int, default=768, help="Hidden size for the transformer")
-    parser.add_argument("--num_layers", type=int, default=12, help="Number of hidden layers")
-    parser.add_argument("--num_heads", type=int, default=12, help="Number of attention heads")
+    parser.add_argument("--hidden_size", type=int, default=512, help="Hidden size for the transformer")
+    parser.add_argument("--num_layers", type=int, default=6, help="Number of hidden layers")
+    parser.add_argument("--num_heads", type=int, default=8, help="Number of attention heads")
     args = parser.parse_args()
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

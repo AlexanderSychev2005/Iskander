@@ -14,24 +14,9 @@ PERIOD_LABELS = [
     'Neo/Late Babylonian', 'Third Millennium', 'Late Antiquity', 'Other'
 ]
 
-PROVENIENCE_LABELS = [
-    'Nineveh', 'Assur', 'Nippur', 'Nimrud', 'Uruk', 
-    'Babylon Region', 'Levant & Anatolia', 'Other'
-]
-
 GENRE_LABELS = [
     'Royal Inscription', 'Lexical & Scholarly', 'Administrative', 
     'Legal', 'Literary & Ritual', 'Letter', 'Other'
-]
-
-RULER_LABELS = [
-    'Ashurbanipal', 'Esarhaddon', 'Sargon II', 'Sennacherib', 
-    'Esarhaddon or Ashurbanipal', 'Nabonidus', 'Nebuchadnezzar II', 
-    'Tiglath-pileser III', 'Ashurnasirpal II', 'Other Ruler', 'Not Royal / NA'
-]
-
-LANGUAGE_LABELS = [
-    'Akkadian', 'Sumerian', 'Bilingual', 'Other Ancient', 'Other'
 ]
 
 def label_to_idx(label_str, label_list):
@@ -61,10 +46,7 @@ def process_file(jsonl_path, tokenizer, max_length=128):
                         "input_ids": input_ids,
                         "attention_mask": [1] * len(input_ids), # Needed for HF, overridden by collator
                         "period_labels": label_to_idx(data.get('period_mapped'), PERIOD_LABELS),
-                        "provenience_labels": label_to_idx(data.get('provenience_mapped'), PROVENIENCE_LABELS),
-                        "genre_labels": label_to_idx(data.get('genre_mapped'), GENRE_LABELS),
-                        "ruler_labels": label_to_idx(data.get('ruler_mapped'), RULER_LABELS),
-                        "language_labels": label_to_idx(data.get('language_mapped'), LANGUAGE_LABELS)
+                        "genre_labels": label_to_idx(data.get('genre_mapped'), GENRE_LABELS)
                     })
             except Exception as e:
                 continue
@@ -73,7 +55,7 @@ def process_file(jsonl_path, tokenizer, max_length=128):
     return records
 
 def main():
-    base_dir = Path(r"C:\Programming\akkadian\data\ready_for_training")
+    base_dir = Path(r"C:\Programming\akkadian\data\prepated_oracc")
     vocab_path = base_dir / "vocab.json"
     train_path = base_dir / "train.jsonl"
     val_path = base_dir / "val.jsonl"
