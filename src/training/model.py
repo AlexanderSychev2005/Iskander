@@ -133,8 +133,10 @@ class AkkadianModel(nn.Module):
         )
         
         # 5. Metadata Classification Heads
-        self.period_head = nn.Linear(hidden_size, 8)
-        self.genre_head = nn.Linear(hidden_size, 7)
+        self.period_head = nn.Linear(hidden_size, 7)
+        self.genre_head = nn.Linear(hidden_size, 6)
+        self.language_head = nn.Linear(hidden_size, 4)
+        self.provenience_head = nn.Linear(hidden_size, 7)
         
         # Apply strict BERT initialization
         self.apply(self._init_weights)
@@ -153,7 +155,7 @@ class AkkadianModel(nn.Module):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
             
-    def forward(self, input_ids, labels=None, unk_labels=None, period_labels=None, genre_labels=None, return_dict=True):
+    def forward(self, input_ids, labels=None, unk_labels=None, period_labels=None, genre_labels=None, language_labels=None, provenience_labels=None, return_dict=True):
         # 1. Text Features (Чистые посимвольные эмбеддинги, без абсолютных позиций)
         x = self.char_embeddings(input_ids)
         x = self.emb_norm(x)
@@ -185,6 +187,8 @@ class AkkadianModel(nn.Module):
         cls_embed = seq[:, 0, :]
         period_logits = self.period_head(cls_embed)
         genre_logits = self.genre_head(cls_embed)
+        language_logits = self.language_head(cls_embed)
+        provenience_logits = self.provenience_head(cls_embed)
         
         # 7. Historical Context Embedding (emb_context)
         # Average of cls_embed and the mean of all sequence token embeddings
@@ -192,7 +196,7 @@ class AkkadianModel(nn.Module):
         emb_context = (cls_embed + seq_mean) / 2.0
         
         loss = None
-        if any(l is not None for l in [labels, unk_labels, period_labels, genre_labels]):
+        if any(l is not None for l in [labels, unk_labels, period_labels, genre_labels, language_labels, provenience_labels]):
             loss_mlm_fct = nn.CrossEntropyLoss(ignore_index=-100, label_smoothing=0.05)
             loss_unk_fct = nn.CrossEntropyLoss(ignore_index=-100)
             loss_meta_fct = nn.CrossEntropyLoss(ignore_index=-100, label_smoothing=0.1)
@@ -208,12 +212,16 @@ class AkkadianModel(nn.Module):
                 if (unk_labels != -100).any():
                     loss += 1.0 * loss_unk_fct(logits_unk.view(-1, 2), unk_labels.view(-1))
             
-            # Metadata Losses (Total Weight = 1.0 -> 0.5 each)
-            meta_weight = 0.5
+            # Metadata Losses (Total Weight = 1.0 -> 0.25 each)
+            meta_weight = 0.25
             if period_labels is not None and (period_labels != -100).any(): 
                 loss += meta_weight * loss_meta_fct(period_logits, period_labels)
             if genre_labels is not None and (genre_labels != -100).any(): 
                 loss += meta_weight * loss_meta_fct(genre_logits, genre_labels)
+            if language_labels is not None and (language_labels != -100).any():
+                loss += meta_weight * loss_meta_fct(language_logits, language_labels)
+            if provenience_labels is not None and (provenience_labels != -100).any():
+                loss += meta_weight * loss_meta_fct(provenience_logits, provenience_labels)
             
         if return_dict:
             return {
@@ -222,10 +230,12 @@ class AkkadianModel(nn.Module):
                 "logits_unk": logits_unk,
                 "emb_context": emb_context,
                 "period_logits": period_logits,
-                "genre_logits": genre_logits
+                "genre_logits": genre_logits,
+                "language_logits": language_logits,
+                "provenience_logits": provenience_logits
             }
         
-        return (loss, logits, logits_unk, emb_context, period_logits, genre_logits) if loss is not None else (logits, logits_unk, emb_context, period_logits, genre_logits)
+        return (loss, logits, logits_unk, emb_context, period_logits, genre_logits, language_logits, provenience_logits) if loss is not None else (logits, logits_unk, emb_context, period_logits, genre_logits, language_logits, provenience_logits)
 
 if __name__ == "__main__":
     model = AkkadianModel(vocab_size=1529)

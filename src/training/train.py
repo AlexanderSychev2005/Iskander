@@ -135,12 +135,14 @@ class AkkadianPhysicalCollator:
             "unk_labels": torch.stack(b_labels_unk),
             "period_labels": torch.tensor([ex["period_labels"] for ex in examples], dtype=torch.long),
             "genre_labels": torch.tensor([ex["genre_labels"] for ex in examples], dtype=torch.long),
+            "language_labels": torch.tensor([ex["language_labels"] for ex in examples], dtype=torch.long),
+            "provenience_labels": torch.tensor([ex["provenience_labels"] for ex in examples], dtype=torch.long),
         }
         
         return batch
 
 def preprocess_logits_for_metrics(logits, labels):
-    # logits: (mlm_logits, unk_logits, emb, period, prov, genre, ruler, lang)
+    # logits: (mlm_logits, unk_logits, emb, period, genre, lang, prov)
     # To save memory, we reduce logits to predictions before accumulating
     
     # 1. MLM: Keep Top-5 indices (B, S, 5)
@@ -151,25 +153,25 @@ def preprocess_logits_for_metrics(logits, labels):
     
     # 3. Metadata: Keep Top-1 (B,)
     meta_preds = []
-    for i in range(3, 5): # period and genre
+    for i in range(3, 7): # period, genre, language, provenience
         meta_preds.append(torch.argmax(logits[i], dim=-1))
         
     return mlm_top5, unk_top1, *meta_preds
 
 def compute_metrics(eval_pred):
     # eval_pred.predictions are now from preprocess_logits_for_metrics
-    # (mlm_top5, unk_top1, period_top1, genre_top1)
-    # eval_pred.label_ids: (labels, unk_labels, period_labels, genre_labels)
+    # (mlm_top5, unk_top1, period_top1, genre_top1, language_top1, provenience_top1)
+    # eval_pred.label_ids: (labels, unk_labels, period_labels, genre_labels, language_labels, provenience_labels)
     preds = eval_pred.predictions
     label_ids = eval_pred.label_ids
     
     metrics = {}
     
-    # Names for the 2 metadata tasks
-    task_names = ["period", "genre"]
+    # Names for the 4 metadata tasks
+    task_names = ["period", "genre", "language", "provenience"]
     
-    # Metadata metrics (preds indices 2 to 3, label_ids indices 2 to 3)
-    for i in range(2, 4):
+    # Metadata metrics (preds indices 2 to 5, label_ids indices 2 to 5)
+    for i in range(2, 6):
         task_preds = preds[i].reshape(-1)
         task_labels = label_ids[i].reshape(-1)
         
@@ -292,7 +294,7 @@ def train():
         torch_compile=False, # AMD ROCm Inductor can cause inf gradients, better to disable
         dataloader_num_workers=args.num_workers,
         report_to="none",
-        label_names=["labels", "unk_labels", "period_labels", "genre_labels"]
+        label_names=["labels", "unk_labels", "period_labels", "genre_labels", "language_labels", "provenience_labels"]
     )
     
     trainer = Trainer(
