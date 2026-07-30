@@ -160,8 +160,8 @@ class AkkadianModel(nn.Module):
         pad_id = 0 # Assuming 0 is pad_id
         attn_mask = (input_ids != pad_id)
         
-        extended_attn_mask = attn_mask.unsqueeze(1).unsqueeze(2).to(dtype=x.dtype)
-        extended_attn_mask = (1.0 - extended_attn_mask) * -10000.0
+        # SDPA natively supports boolean masks, which prevents -inf overflow issues in BF16/FP16
+        extended_attn_mask = attn_mask.unsqueeze(1).unsqueeze(2) # (B, 1, 1, S)
         
         # 3. Transformer (RoPE вращает векторы прямо внутри self-attention)
         enc_out = self.encoder(
@@ -207,8 +207,10 @@ class AkkadianModel(nn.Module):
             
             # Metadata Losses (Total Weight = 1.0 -> 0.5 each)
             meta_weight = 0.5
-            if period_labels is not None: loss += meta_weight * loss_meta_fct(period_logits, period_labels)
-            if genre_labels is not None: loss += meta_weight * loss_meta_fct(genre_logits, genre_labels)
+            if period_labels is not None and (period_labels != -100).any(): 
+                loss += meta_weight * loss_meta_fct(period_logits, period_labels)
+            if genre_labels is not None and (genre_labels != -100).any(): 
+                loss += meta_weight * loss_meta_fct(genre_logits, genre_labels)
             
         if return_dict:
             return {
