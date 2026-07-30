@@ -1,5 +1,6 @@
 import os
 import torch
+torch.set_float32_matmul_precision('high')
 import argparse
 import random
 import numpy as np
