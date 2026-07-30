@@ -59,28 +59,31 @@ class BertSelfAttentionWithRoPE(BertSelfAttention):
         query_layer, key_layer = apply_rotary_pos_emb(
             query_layer, key_layer, cos, sin
         )
+        query_layer = query_layer.to(value_layer.dtype)
+        key_layer = key_layer.to(value_layer.dtype)
 
         # PyTorch 2.0 Scaled Dot-Product Attention (FlashAttention)
         # We need to reshape attention_mask to boolean or additive float mask compatible with SDPA.
         # HF attention_mask is already expanded to [batch, 1, seq_len, seq_len] with 0.0 and -10000.0
         # SDPA natively supports float additive masks
         
-        # Ensure contiguous tensors for SDPA
-        query_layer = query_layer.contiguous()
-        key_layer = key_layer.contiguous()
-        value_layer = value_layer.contiguous()
+        # SDPA is known to have backward pass bugs on ROCm with Bfloat16 causing inf gradients.
+        # Since our seq_len is small (256), manual attention is perfectly fast and 100% stable.
+        
+        # [batch, heads, seq, head_dim]
+        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+        
+        if attention_mask is not None:
+            attention_scores = attention_scores + attention_mask
+            
+        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
         
         dropout_p = self.dropout.p if self.training else 0.0
-        
-        # SDPA is heavily optimized and replaces manual matmul + softmax + dropout + matmul
-        context_layer = F.scaled_dot_product_attention(
-            query_layer,
-            key_layer,
-            value_layer,
-            attn_mask=attention_mask,
-            dropout_p=dropout_p,
-            is_causal=False
-        )
+        if dropout_p > 0.0:
+            attention_probs = nn.functional.dropout(attention_probs, p=dropout_p, training=self.training)
+            
+        context_layer = torch.matmul(attention_probs, value_layer)
 
         context_layer = context_layer.transpose(1, 2).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
