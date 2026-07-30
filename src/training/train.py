@@ -289,7 +289,6 @@ def train():
         lr_scheduler_type="cosine",
         warmup_steps=500,
         bf16=torch.cuda.is_available(),
-        tf32=torch.cuda.is_available(),
         torch_compile=torch.cuda.is_available(), # T4 Tensor Core optimization
         dataloader_num_workers=args.num_workers,
         report_to="none",
