@@ -291,7 +291,7 @@ def train():
         lr_scheduler_type="cosine",
         warmup_steps=500,
         bf16=True,
-        torch_compile=False, # AMD ROCm Inductor can cause inf gradients, better to disable
+        torch_compile=True, # Включено по просьбе пользователя (надеемся, что без inf)
         dataloader_num_workers=args.num_workers,
         report_to="none",
         label_names=["labels", "unk_labels", "period_labels", "genre_labels", "language_labels", "provenience_labels"]
