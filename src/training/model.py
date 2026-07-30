@@ -160,8 +160,8 @@ class AkkadianModel(nn.Module):
         pad_id = 0 # Assuming 0 is pad_id
         attn_mask = (input_ids != pad_id)
         
-        # SDPA natively supports boolean masks, which prevents -inf overflow issues in BF16/FP16
-        extended_attn_mask = attn_mask.unsqueeze(1).unsqueeze(2) # (B, 1, 1, S)
+        extended_attn_mask = attn_mask.unsqueeze(1).unsqueeze(2).to(dtype=x.dtype)
+        extended_attn_mask = (1.0 - extended_attn_mask) * -10000.0
         
         # 3. Transformer (RoPE вращает векторы прямо внутри self-attention)
         enc_out = self.encoder(
