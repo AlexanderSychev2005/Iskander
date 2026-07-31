@@ -11,6 +11,15 @@ wheels/
 
 # Data
 data/
+
+# Model weights and training output
 checkpoints/
+final_model_cloud/
+model_v2_final/
+training_output/
+*.safetensors
+*.pt
+*.pth
+*.bin
 
 papers/

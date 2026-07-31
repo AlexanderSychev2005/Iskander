@@ -18,6 +18,7 @@ class BertSelfAttentionWithRoPE(BertSelfAttention):
         self.rotary_emb = LlamaRotaryEmbedding(
             config=llama_config,
         )
+        self.attn_weights = None
 
     def transpose_for_scores(self, x: torch.Tensor) -> torch.Tensor:
         new_x_shape = x.size()[:-1] + (
@@ -39,9 +40,11 @@ class BertSelfAttentionWithRoPE(BertSelfAttention):
         **kwargs,
     ) -> tuple[torch.Tensor, ...]:
         
-        output_attentions = getattr(
-            self.config, "output_attentions", output_attentions
-        ) or kwargs.get("output_attentions", output_attentions)
+        output_attentions = (
+            getattr(self.config, "output_attentions", False)
+            or output_attentions
+            or kwargs.get("output_attentions", False)
+        )
         
         mixed_query_layer = self.query(hidden_states)
         key_layer = self.transpose_for_scores(self.key(hidden_states))
@@ -83,6 +86,8 @@ class BertSelfAttentionWithRoPE(BertSelfAttention):
         if dropout_p > 0.0:
             attention_probs = nn.functional.dropout(attention_probs, p=dropout_p, training=self.training)
             
+        self.attn_weights = attention_probs
+        
         context_layer = torch.matmul(attention_probs, value_layer)
 
         context_layer = context_layer.transpose(1, 2).contiguous()
@@ -155,7 +160,7 @@ class AkkadianModel(nn.Module):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
             
-    def forward(self, input_ids, labels=None, unk_labels=None, period_labels=None, genre_labels=None, language_labels=None, provenience_labels=None, return_dict=True):
+    def forward(self, input_ids, labels=None, unk_labels=None, period_labels=None, genre_labels=None, language_labels=None, provenience_labels=None, output_attentions=False, return_dict=True):
         # 1. Text Features (Чистые посимвольные эмбеддинги, без абсолютных позиций)
         x = self.char_embeddings(input_ids)
         x = self.emb_norm(x)
@@ -172,13 +177,15 @@ class AkkadianModel(nn.Module):
         enc_out = self.encoder(
             x,
             attention_mask=extended_attn_mask,
+            output_attentions=output_attentions,
             return_dict=True
         )
         seq = enc_out.last_hidden_state
         
-        # 4. MLM Output
+        # 4. MLM Output (tied-embedding projection with sqrt normalization + embedding dropout)
         x_res = self.restore_norm(self.restore_act(self.restore_dense(seq)))
-        logits = (x_res @ self.char_embeddings.weight.T) + self.restore_bias
+        emb_weights = self.emb_dropout(self.char_embeddings.weight)
+        logits = (x_res @ emb_weights.T) / math.sqrt(emb_weights.shape[-1]) + self.restore_bias
         
         # 5. Unknown Gap Expansion Output (per-token, but only trained on [#] positions)
         logits_unk = self.unk_head(seq)
@@ -232,10 +239,16 @@ class AkkadianModel(nn.Module):
                 "period_logits": period_logits,
                 "genre_logits": genre_logits,
                 "language_logits": language_logits,
-                "provenience_logits": provenience_logits
+                "provenience_logits": provenience_logits,
+                "attentions": [layer.attention.self.attn_weights for layer in self.encoder.layer] if output_attentions else None
             }
         
-        return (loss, logits, logits_unk, emb_context, period_logits, genre_logits, language_logits, provenience_logits) if loss is not None else (logits, logits_unk, emb_context, period_logits, genre_logits, language_logits, provenience_logits)
+        outputs = (logits, logits_unk, emb_context, period_logits, genre_logits, language_logits, provenience_logits)
+        if output_attentions:
+            outputs = outputs + ([layer.attention.self.attn_weights for layer in self.encoder.layer],)
+        if loss is not None:
+            outputs = (loss,) + outputs
+        return outputs
 
 if __name__ == "__main__":
     model = AkkadianModel(vocab_size=1529)
