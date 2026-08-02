@@ -65,30 +65,33 @@ class BertSelfAttentionWithRoPE(BertSelfAttention):
         query_layer = query_layer.to(value_layer.dtype)
         key_layer = key_layer.to(value_layer.dtype)
 
-        # PyTorch 2.0 Scaled Dot-Product Attention (FlashAttention)
-        # We need to reshape attention_mask to boolean or additive float mask compatible with SDPA.
-        # HF attention_mask is already expanded to [batch, 1, seq_len, seq_len] with 0.0 and -10000.0
-        # SDPA natively supports float additive masks
-        
-        # SDPA is known to have backward pass bugs on ROCm with Bfloat16 causing inf gradients.
-        # Since our seq_len is small (256), manual attention is perfectly fast and 100% stable.
-        
-        # [batch, heads, seq, head_dim]
-        attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
-        
-        if attention_mask is not None:
-            attention_scores = attention_scores + attention_mask
-            
-        attention_probs = nn.functional.softmax(attention_scores, dim=-1)
-        
         dropout_p = self.dropout.p if self.training else 0.0
-        if dropout_p > 0.0:
-            attention_probs = nn.functional.dropout(attention_probs, p=dropout_p, training=self.training)
-            
-        self.attn_weights = attention_probs
-        
-        context_layer = torch.matmul(attention_probs, value_layer)
+
+        # The manual (matmul+softmax+matmul) path this used to always take was
+        # a workaround for an SDPA backward-pass bug on ROCm/Bfloat16 (see git
+        # history) -- irrelevant on CUDA (T4/Colab and similar), where SDPA
+        # picks a fused flash-attention/memory-efficient kernel and is both
+        # faster and lower-memory. Kept as an explicit fallback only for
+        # output_attentions=True, since the fused SDPA kernel never
+        # materializes attention_probs for inspection -- if this ever runs on
+        # ROCm again, force this branch by passing output_attentions=True.
+        if output_attentions:
+            attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+            attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+            if attention_mask is not None:
+                attention_scores = attention_scores + attention_mask
+            attention_probs = nn.functional.softmax(attention_scores, dim=-1)
+            if dropout_p > 0.0:
+                attention_probs = nn.functional.dropout(attention_probs, p=dropout_p, training=self.training)
+            self.attn_weights = attention_probs
+            context_layer = torch.matmul(attention_probs, value_layer)
+        else:
+            self.attn_weights = None
+            context_layer = nn.functional.scaled_dot_product_attention(
+                query_layer, key_layer, value_layer,
+                attn_mask=attention_mask,
+                dropout_p=dropout_p,
+            )
 
         context_layer = context_layer.transpose(1, 2).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
@@ -98,7 +101,8 @@ class BertSelfAttentionWithRoPE(BertSelfAttention):
 
 
 class AkkadianModel(nn.Module):
-    def __init__(self, vocab_size, hidden_size=512, num_hidden_layers=6, num_attention_heads=8):
+    def __init__(self, vocab_size, hidden_size=640, num_hidden_layers=8, num_attention_heads=8,
+                 num_period=9, num_genre=6, num_language=4, num_provenience=12):
         super().__init__()
         self.hidden_size = hidden_size
         
@@ -138,10 +142,10 @@ class AkkadianModel(nn.Module):
         )
         
         # 5. Metadata Classification Heads
-        self.period_head = nn.Linear(hidden_size, 7)
-        self.genre_head = nn.Linear(hidden_size, 6)
-        self.language_head = nn.Linear(hidden_size, 4)
-        self.provenience_head = nn.Linear(hidden_size, 7)
+        self.period_head = nn.Linear(hidden_size, num_period)
+        self.genre_head = nn.Linear(hidden_size, num_genre)
+        self.language_head = nn.Linear(hidden_size, num_language)
+        self.provenience_head = nn.Linear(hidden_size, num_provenience)
         
         # Apply strict BERT initialization
         self.apply(self._init_weights)
@@ -208,22 +212,26 @@ class AkkadianModel(nn.Module):
             loss_unk_fct = nn.CrossEntropyLoss(ignore_index=-100)
             loss_meta_fct = nn.CrossEntropyLoss(ignore_index=-100, label_smoothing=0.1)
             loss = 0.0
-            
+
             # MLM Loss (Weight = 3.0)
             if labels is not None:
                 if (labels != -100).any():
                     loss += 3.0 * loss_mlm_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
-                    
+
             # UNK Loss (Gap Expansion) (Weight = 1.0)
             if unk_labels is not None:
                 if (unk_labels != -100).any():
                     loss += 1.0 * loss_unk_fct(logits_unk.view(-1, 2), unk_labels.view(-1))
-            
-            # Metadata Losses (Total Weight = 1.0 -> 0.25 each)
+
+            # Metadata Losses (Total Weight = 1.0 -> 0.25 each). Plain
+            # label-smoothed CE, no per-class weighting -- same recipe as
+            # Aeneas's auxiliary heads (fixed task-level weight, no class
+            # reweighting anywhere in their loss either); macro-F1 in
+            # compute_metrics is what actually tracks minority-class quality.
             meta_weight = 0.25
-            if period_labels is not None and (period_labels != -100).any(): 
+            if period_labels is not None and (period_labels != -100).any():
                 loss += meta_weight * loss_meta_fct(period_logits, period_labels)
-            if genre_labels is not None and (genre_labels != -100).any(): 
+            if genre_labels is not None and (genre_labels != -100).any():
                 loss += meta_weight * loss_meta_fct(genre_logits, genre_labels)
             if language_labels is not None and (language_labels != -100).any():
                 loss += meta_weight * loss_meta_fct(language_logits, language_labels)

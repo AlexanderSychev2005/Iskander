@@ -6,8 +6,27 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "datasets>=5.0.1",
+    "editdistance>=0.8.1",
     "jupyterlab>=4.6.2",
     "matplotlib>=3.11.1",
     "pandas>=3.0.3",
+    "torch",
+    "scikit-learn>=1.9.0",
     "seaborn>=0.13.2",
+    "transformers>=5.14.1",
+    "jupyter>=1.1.1",
+    "lab>=8.10",
 ]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+torchvision = { index = "pytorch-cu126" }
+torchaudio = { index = "pytorch-cu126" }
+
+[tool.uv]
+package = false

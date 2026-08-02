@@ -1,184 +1,178 @@
 import os
 import json
 import glob
+import zipfile
 from tqdm import tqdm
 
-def load_cuneiml_signs(dataset_dir):
-    """Loads all sign sequences from CuneiML datasets into a set for deduplication."""
-    existing_signs = set()
-    for split in ['train', 'val', 'test_a', 'test_b']:
-        filepath = os.path.join(dataset_dir, f"{split}.jsonl")
-        if os.path.exists(filepath):
-            with open(filepath, 'r', encoding='utf-8') as f:
-                for line in f:
-                    try:
-                        data = json.loads(line)
-                        if 'signs' in data:
-                            # Join array of signs into a single string
-                            sign_str = "".join(data['signs'])
-                            if sign_str:
-                                existing_signs.add(sign_str)
-                    except Exception:
-                        pass
-    return existing_signs
+# ORACC projects that are lexical lists / gazetteers / catalogue indexes with
+# no actual corpusjson text -- skipping them up front avoids opening 47 zips
+# just to find nothing.
+METADATA_FIELDS = ["period", "genre", "provenience", "language", "dialect", "material", "object_type", "script", "ruler"]
 
-catalogue_cache = {}
 
-def parse_oracc_json(filepath):
-    with open(filepath, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-        
-    textid = data.get('textid', '')
-    
-    # Try to load metadata from catalogue.json
-    metadata = {}
-    catalogue_path = os.path.join(os.path.dirname(os.path.dirname(filepath)), 'catalogue.json')
-    if textid and os.path.exists(catalogue_path):
-        if catalogue_path not in catalogue_cache:
-            try:
-                with open(catalogue_path, 'r', encoding='utf-8') as cat_f:
-                    catalogue_cache[catalogue_path] = json.load(cat_f)
-            except Exception:
-                catalogue_cache[catalogue_path] = {}
-                
-        catalogue = catalogue_cache.get(catalogue_path, {})
-        members = catalogue.get('members', {})
-        if textid in members:
-            member_data = members[textid]
-            
-            # Core metadata
-            metadata['period'] = member_data.get('period', 'unknown')
-            metadata['genre'] = member_data.get('genre', 'unknown')
-            metadata['provenience'] = member_data.get('provenience', 'unknown')
-            
-            # Expanded metadata
-            metadata['language'] = member_data.get('language', 'unknown')
-            metadata['dialect'] = member_data.get('dialect', 'unknown')
-            metadata['material'] = member_data.get('material', 'unknown')
-            metadata['object_type'] = member_data.get('object_type', 'unknown')
-            metadata['script'] = member_data.get('script', 'unknown')
-            metadata['ruler'] = member_data.get('ruler', 'unknown')
-            
-    # Rest of the function...
-            
+def extract_utf8(gdl_list, out):
+    for g in gdl_list:
+        if g.get("gdl_type") == "diszless" and "group" in g:
+            # A numeral value (e.g. "15", "2/3") -- ORACC's own utf8 field on
+            # this wrapper node is a generic "X" placeholder, not damage: the
+            # real, fully-known sign glyph(s) are one level down in 'group'
+            # (e.g. 15 -> 𒌋+𒐊). Recovering it keeps distinct numerals
+            # distinguishable instead of collapsing them all onto the same
+            # token used for genuinely illegible signs.
+            extract_utf8(g["group"], out)
+        elif "utf8" in g:
+            out.append(g["utf8"])
+        elif g.get("x") == "ellipsis":
+            # An unknown-length gap ("..." in the transliteration) -- unlike
+            # a single damaged sign ("x", which has its own utf8=="x" node
+            # and is handled by the branch above), this node carries no
+            # utf8/seq/group and was previously skipped entirely, silently
+            # deleting the gap and making its neighbors look adjacent.
+            # Represent it with the same compressed-gap token the training
+            # collator already uses for synthetic damage, so real and
+            # simulated gaps share one vocabulary entry.
+            out.append("[#]")
+        elif "seq" in g:
+            extract_utf8(g["seq"], out)
+        elif "group" in g:
+            extract_utf8(g["group"], out)
+
+
+def parse_corpus_json(data, metadata):
     lines = []
-    current_line_raw = []
-    current_line_signs = []
-    current_line_num = ""
-    
+    current_raw, current_signs, current_num = [], [], ""
+
+    def flush():
+        if current_raw or current_signs:
+            # Collapse consecutive "[#]" markers into one: ORACC sometimes
+            # records the same physical gap via ellipsis nodes on both the
+            # word before and after it, which would otherwise inflate one
+            # real lacuna into two adjacent gap tokens.
+            signs = []
+            for s in current_signs:
+                if s == "[#]" and signs and signs[-1] == "[#]":
+                    continue
+                signs.append(s)
+            line_obj = {"raw": " ".join(current_raw), "signs": signs, "num": current_num}
+            if metadata:
+                line_obj.update(metadata)
+            lines.append(line_obj)
+
     def traverse(node):
-        nonlocal current_line_raw, current_line_signs, current_line_num
-        
-        # Line start
-        if node.get('node') == 'd' and node.get('type') == 'line-start':
-            # Save previous line if exists
-            if current_line_raw or current_line_signs:
-                line_obj = {
-                    "raw": " ".join(current_line_raw),
-                    "signs": current_line_signs.copy()
-                }
-                if metadata:
-                    line_obj.update(metadata)
-                lines.append(line_obj)
-            current_line_raw.clear()
-            current_line_signs.clear()
-            current_line_num = node.get('n', '')
-            
-        # Word node
-        elif node.get('node') == 'l':
-            frag = node.get('frag', '')
+        nonlocal current_raw, current_signs, current_num
+        if not isinstance(node, dict):
+            return
+        if node.get("node") == "d" and node.get("type") == "line-start":
+            flush()
+            current_raw, current_signs = [], []
+            current_num = node.get("n", "")
+        elif node.get("node") == "l":
+            frag = node.get("frag", "")
             if frag:
-                current_line_raw.append(frag)
-                
-            f_dict = node.get('f', {})
-            gdl = f_dict.get('gdl', [])
-            
-            def extract_utf8(gdl_list):
-                for g in gdl_list:
-                    if 'utf8' in g:
-                        current_line_signs.append(g['utf8'])
-                    elif 'seq' in g:
-                        extract_utf8(g['seq'])
-                    elif 'group' in g:
-                        extract_utf8(g['group'])
-            
-            extract_utf8(gdl)
-            
-        # Recursive traverse
-        if 'cdl' in node:
-            for child in node['cdl']:
-                traverse(child)
-                
+                current_raw.append(frag)
+            extract_utf8(node.get("f", {}).get("gdl", []), current_signs)
+        for child in node.get("cdl", []):
+            traverse(child)
+
     traverse(data)
-    # Save the last line
-    if current_line_raw or current_line_signs:
-        line_obj = {
-            "raw": " ".join(current_line_raw),
-            "signs": current_line_signs.copy()
-        }
-        if metadata:
-            line_obj.update(metadata)
-        lines.append(line_obj)
-        
+    flush()
     return lines
 
+
+def catalogue_metadata(members, textid):
+    member = members.get(textid)
+    if not member:
+        return {}, None
+    meta = {field: member.get(field, "unknown") or "unknown" for field in METADATA_FIELDS}
+    cdli_id = member.get("cdli_id")
+    if not cdli_id and str(member.get("id_text", "")).startswith("P"):
+        cdli_id = member["id_text"]
+    return meta, cdli_id
+
+
+def process_zip(zip_path, out_f, seen_signs):
+    stats = {"total": 0, "written": 0, "skipped_empty": 0, "skipped_dupe": 0, "cdli_ids": set()}
+    try:
+        z = zipfile.ZipFile(zip_path)
+    except zipfile.BadZipFile:
+        return stats
+    names = z.namelist()
+    corpus_files = [n for n in names if "/corpusjson/" in n and n.endswith(".json")]
+    if not corpus_files:
+        return stats
+
+    catalogue_name = next((n for n in names if n.endswith("catalogue.json")), None)
+    members = {}
+    if catalogue_name:
+        try:
+            with z.open(catalogue_name) as f:
+                members = json.load(f).get("members", {})
+        except (json.JSONDecodeError, KeyError):
+            members = {}
+
+    for cf in corpus_files:
+        try:
+            with z.open(cf) as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            continue
+        textid = data.get("textid", "")
+        metadata, cdli_id = catalogue_metadata(members, textid)
+        if cdli_id:
+            stats["cdli_ids"].add(cdli_id)
+        # A stable grouping key for train/val/test splitting: the real CDLI
+        # P-number when we have one (comparable across ORACC and CuneiML), or
+        # an ORACC-local fallback so ungrouped texts still split as a whole.
+        tablet_id = cdli_id or f"oracc:{data.get('project', textid)}:{textid}"
+
+        for line in parse_corpus_json(data, metadata):
+            stats["total"] += 1
+            signs = [s for s in line["signs"] if s]
+            if len(signs) < 2:
+                stats["skipped_empty"] += 1
+                continue
+            sign_key = "".join(signs)
+            if sign_key in seen_signs:
+                stats["skipped_dupe"] += 1
+                continue
+            seen_signs.add(sign_key)
+            line["signs"] = signs
+            line["textid"] = textid
+            line["cdli_id"] = cdli_id
+            line["tablet_id"] = tablet_id
+            out_f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            stats["written"] += 1
+
+    return stats
+
+
 def main():
-    CUNEIML_DIR = "../../data/prepared_datasets"
-    ORACC_UNZIPPED_DIR = "../../data/oracc_raw/unzipped"
-    OUTPUT_FILE = "../../data/oracc_dataset/oracc_unique.jsonl"
-    
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    RAW_DIR = os.path.join(base_dir, "data", "raw", "oracc")
+    OUTPUT_FILE = os.path.join(base_dir, "data", "interim", "oracc.jsonl")
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
-    
-    print("Initializing empty set for deduplication (Oracc-internal only)...")
-    existing_signs = set()
-    
-    print("Finding Oracc JSON files...")
-    json_files = glob.glob(os.path.join(ORACC_UNZIPPED_DIR, "**", "corpusjson", "*.json"), recursive=True)
-    print(f"Found {len(json_files)} JSON files in Oracc.")
-    
-    total_lines = 0
-    unique_lines = 0
-    skipped_empty = 0
-    skipped_dupes = 0
-    
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as out_f:
-        for filepath in tqdm(json_files, desc="Parsing Oracc JSONs"):
-            try:
-                parsed_lines = parse_oracc_json(filepath)
-                
-                for line in parsed_lines:
-                    total_lines += 1
-                    
-                    sign_str = "".join(line['signs'])
-                    
-                    # 1. Skip empty lines
-                    if not sign_str.strip():
-                        skipped_empty += 1
-                        continue
-                        
-                    # 2. Skip duplicates
-                    if sign_str in existing_signs:
-                        skipped_dupes += 1
-                        continue
-                        
-                    # Write unique line
-                    out_f.write(json.dumps(line, ensure_ascii=False) + "\n")
-                    unique_lines += 1
-                    
-                    # Add to set so we don't duplicate within Oracc itself!
-                    existing_signs.add(sign_str)
-                    
-            except Exception as e:
-                print(f"Error parsing {filepath}: {e}")
-                
-    print("\n--- Parsing Complete ---")
-    print(f"Total lines parsed: {total_lines}")
-    print(f"Skipped (Empty): {skipped_empty}")
-    print(f"Skipped (Duplicates): {skipped_dupes}")
-    print(f"Saved Unique Lines: {unique_lines}")
-    print(f"Output saved to: {OUTPUT_FILE}")
+
+    zip_paths = sorted(glob.glob(os.path.join(RAW_DIR, "*.zip")))
+    print(f"Found {len(zip_paths)} ORACC project archives in {RAW_DIR}")
+
+    seen_signs = set()
+    all_cdli_ids = set()
+    totals = {"total": 0, "written": 0, "skipped_empty": 0, "skipped_dupe": 0}
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as out_f:
+        for zp in tqdm(zip_paths, desc="ORACC projects"):
+            stats = process_zip(zp, out_f, seen_signs)
+            all_cdli_ids |= stats["cdli_ids"]
+            for k in totals:
+                totals[k] += stats[k]
+
+    print(f"\nParsed lines: {totals['total']}")
+    print(f"Written unique lines: {totals['written']}")
+    print(f"Skipped (fewer than 2 signs): {totals['skipped_empty']}")
+    print(f"Skipped (duplicate sign string): {totals['skipped_dupe']}")
+    print(f"Distinct CDLI IDs cross-referenced: {len(all_cdli_ids)}")
+    print(f"Output: {OUTPUT_FILE}")
+
 
 if __name__ == "__main__":
-    # Ensure script runs with correct paths if run from root
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     main()

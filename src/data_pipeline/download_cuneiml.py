@@ -5,10 +5,10 @@ import urllib.error
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
-JSON_FILE = "../data/CuneiMLv1.2.json"
-DATA_DIR = "../data/images_dataset"
-IMG_DIR = os.path.join(DATA_DIR, "images")
-LINEART_DIR = os.path.join(DATA_DIR, "linearts")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+JSON_FILE = os.path.join(BASE_DIR, "data", "raw", "cuneiml", "CuneiMLv1.2.json")
+IMG_DIR = os.path.join(BASE_DIR, "data", "raw", "cuneiml", "images")
+LINEART_DIR = os.path.join(BASE_DIR, "data", "raw", "cuneiml", "linearts")
 
 os.makedirs(IMG_DIR, exist_ok=True)
 os.makedirs(LINEART_DIR, exist_ok=True)

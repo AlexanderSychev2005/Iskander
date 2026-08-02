@@ -16,9 +16,12 @@ def build_index():
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to trained model checkpoint")
     parser.add_argument("--data_dir", type=str, default="AlexSychovUN/akkadian", help="HF Dataset or local path")
-    parser.add_argument("--vocab_file", type=str, default=os.path.join(os.path.dirname(os.path.dirname(__file__)), "training", "vocab.json"))
+    parser.add_argument("--vocab_file", type=str, default=r"C:\Programming\akkadian\data\processed\vocab.json")
     parser.add_argument("--output_file", type=str, default="dataset_index.pt", help="Where to save the tensor index")
     parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--hidden_size", type=int, default=640, help="Must match the checkpoint's training config")
+    parser.add_argument("--num_layers", type=int, default=8, help="Must match the checkpoint's training config")
+    parser.add_argument("--num_heads", type=int, default=8, help="Must match the checkpoint's training config")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -28,9 +31,23 @@ def build_index():
     tokenizer.load(args.vocab_file)
 
     print("Loading model...")
-    # Load weights (assuming standard 12-layer config for now, can be adjusted)
-    model = AkkadianModel(vocab_size=len(tokenizer.vocab), hidden_size=768, num_hidden_layers=12, num_attention_heads=12)
-    state_dict = torch.load(os.path.join(args.checkpoint, "pytorch_model.bin"), map_location="cpu")
+    ckpt_path = os.path.join(args.checkpoint, "pytorch_model.bin")
+    if not os.path.exists(ckpt_path):
+        from safetensors.torch import load_file
+        state_dict = load_file(os.path.join(args.checkpoint, "model.safetensors"))
+    else:
+        state_dict = torch.load(ckpt_path, map_location="cpu")
+    # Metadata head sizes are fully determined by the checkpoint itself --
+    # inferring them here avoids the head-count/hidden-size drifting out of
+    # sync with what the checkpoint was actually trained with.
+    model = AkkadianModel(
+        vocab_size=state_dict['char_embeddings.weight'].shape[0],
+        hidden_size=args.hidden_size, num_hidden_layers=args.num_layers, num_attention_heads=args.num_heads,
+        num_period=state_dict['period_head.weight'].shape[0],
+        num_genre=state_dict['genre_head.weight'].shape[0],
+        num_language=state_dict['language_head.weight'].shape[0],
+        num_provenience=state_dict['provenience_head.weight'].shape[0],
+    )
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
@@ -64,15 +81,11 @@ def build_index():
             batch = batch.to(device)
             # Forward pass
             outputs = model(batch)
-            # logits, unk, emb_context, ...
-            emb_context = outputs[2] # Shape: (B, S, H)
-            
-            # Use mean pooling over the sequence for the document embedding
-            # More accurately, we can use the first token [CLS]
-            cls_embeddings = emb_context[:, 0, :] # Shape: (B, H)
-            
-            # Normalize to cosine similarity can be computed via dot product
-            cls_embeddings = torch.nn.functional.normalize(cls_embeddings, p=2, dim=-1)
+            # emb_context is already pooled to (B, H) -- mean of [CLS] and the sequence mean
+            emb_context = outputs["emb_context"]
+
+            # Normalize so cosine similarity can be computed via dot product
+            cls_embeddings = torch.nn.functional.normalize(emb_context, p=2, dim=-1)
             
             all_embeddings.append(cls_embeddings.cpu())
             

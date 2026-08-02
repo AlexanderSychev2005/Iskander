@@ -15,26 +15,33 @@ from src.training.model import AkkadianModel
 from src.training.tokenizer import CharacterTokenizer
 
 class AkkadianPredictor:
-    def __init__(self, checkpoint_path, vocab_file=None, index_file=None):
+    def __init__(self, checkpoint_path, vocab_file=None, index_file=None, hidden_size=640, num_hidden_layers=8, num_attention_heads=8):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
+
         self.tokenizer = CharacterTokenizer()
         if vocab_file is None:
-            vocab_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "training", "vocab.json")
+            vocab_file = r"C:\Programming\akkadian\data\processed\vocab.json"
         self.tokenizer.load(vocab_file)
-        
-        # Note: Updated to AMD model parameters
-        self.model = AkkadianModel(
-            vocab_size=len(self.tokenizer.vocab), 
-            hidden_size=1024, 
-            num_hidden_layers=16, 
-            num_attention_heads=16
-        )
+
         try:
             from safetensors.torch import load_file
             state_dict = load_file(os.path.join(checkpoint_path, "model.safetensors"))
         except (ImportError, FileNotFoundError):
             state_dict = torch.load(os.path.join(checkpoint_path, "pytorch_model.bin"), map_location="cpu")
+
+        # hidden_size/num_hidden_layers/num_attention_heads must match how the
+        # checkpoint was trained (not recoverable from tensor shapes alone);
+        # vocab_size and the metadata head sizes are, so infer those.
+        self.model = AkkadianModel(
+            vocab_size=state_dict['char_embeddings.weight'].shape[0],
+            hidden_size=hidden_size,
+            num_hidden_layers=num_hidden_layers,
+            num_attention_heads=num_attention_heads,
+            num_period=state_dict['period_head.weight'].shape[0],
+            num_genre=state_dict['genre_head.weight'].shape[0],
+            num_language=state_dict['language_head.weight'].shape[0],
+            num_provenience=state_dict['provenience_head.weight'].shape[0],
+        )
         self.model.load_state_dict(state_dict)
         self.model.to(self.device)
         self.model.eval()
@@ -47,6 +54,14 @@ class AkkadianPredictor:
         self.mask_id = self.tokenizer.vocab.get(self.tokenizer.mask_token)
         self.hash_id = self.tokenizer.vocab.get("[#]", -1)
 
+        # Positions the model fills in during decoding must never resolve to
+        # a non-content token (PAD/UNK/CLS/SEP/MASK/x/X/[#]) -- there's no
+        # such thing as "the restored sign is [#]". Mirrors the same
+        # exclusion applied at training time (AkkadianPhysicalCollator) and
+        # in eval (train.non_content_ids).
+        from src.training.train import non_content_ids
+        self.banned_ids = torch.tensor(sorted(non_content_ids(self.tokenizer)), dtype=torch.long)
+
     def search_parallels(self, text, top_k=5):
         """Finds the most similar historical texts using cosine similarity of the CLS token."""
         if self.index is None:
@@ -55,10 +70,10 @@ class AkkadianPredictor:
             
         token_ids = self.tokenizer.encode(text, max_length=128)
         t_input = torch.tensor([token_ids], dtype=torch.long, device=self.device)
-        
+
         with torch.no_grad():
             outputs = self.model(t_input)
-            emb = outputs[2][:, 0, :] # CLS token
+            emb = outputs["emb_context"]  # already pooled to (B, H)
             emb = torch.nn.functional.normalize(emb, p=2, dim=-1)
             
             # Cosine similarity is dot product when normalized
@@ -116,7 +131,8 @@ class AkkadianPredictor:
                 t_input = torch.tensor([current_ids[:128]], dtype=torch.long, device=self.device)
                 outputs = self.model(t_input, return_dict=False)
                 mlm_logits = outputs[0][0] # (S, V)
-                
+                mlm_logits[:, self.banned_ids] = float("-inf")
+
                 best_idx = -1
                 best_prob = -1.0
                 best_char_id = -1
@@ -199,13 +215,20 @@ def evaluate_cer(predictor, data_dir, num_samples=1000):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=str, required=True, help="Path to checkpoint (e.g. checkpoints/checkpoint-2000)")
+    parser.add_argument("--vocab_file", type=str, default=None, help="Defaults to vocab.json (signs); pass vocab_translit.json for a --field text checkpoint")
     parser.add_argument("--index_file", type=str, default=None, help="Path to dataset_index.pt")
-    parser.add_argument("--data_dir", type=str, default="AlexSychovUN/akkadian")
+    parser.add_argument("--data_dir", type=str, default="AlexSychovUN/Iskander-Dataset")
     parser.add_argument("--eval_cer", action="store_true", help="Run CER evaluation on validation set")
     parser.add_argument("--text", type=str, default=None, help="Text to restore")
+    parser.add_argument("--hidden_size", type=int, default=640, help="Must match the checkpoint's training config")
+    parser.add_argument("--num_layers", type=int, default=8, help="Must match the checkpoint's training config")
+    parser.add_argument("--num_heads", type=int, default=8, help="Must match the checkpoint's training config")
     args = parser.parse_args()
-    
-    predictor = AkkadianPredictor(args.checkpoint, index_file=args.index_file)
+
+    predictor = AkkadianPredictor(
+        args.checkpoint, vocab_file=args.vocab_file, index_file=args.index_file,
+        hidden_size=args.hidden_size, num_hidden_layers=args.num_layers, num_attention_heads=args.num_heads,
+    )
     
     if args.eval_cer:
         evaluate_cer(predictor, args.data_dir)
