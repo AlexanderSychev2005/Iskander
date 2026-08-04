@@ -244,7 +244,7 @@ def compute_metrics(eval_pred):
 def train():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default=r"C:\Programming\akkadian\data\processed\hf_dataset")
-    parser.add_argument("--label_config", type=str, default=r"C:\Programming\akkadian\data\processed\label_configs.json")
+    parser.add_argument("--label_config", type=str, default=None, help="Path to label_configs.json (sizes the metadata heads); auto-resolved from --data_dir if omitted")
     parser.add_argument("--model_name", type=str, default="bert-base-multilingual-cased")
     parser.add_argument("--save_dir", type=str, default="checkpoints_mbert")
     # 64 is untested on real hardware -- mBERT (~179M params, 12 layers) is
@@ -320,11 +320,18 @@ def train():
 
     collator = MBertCollator(tokenizer)
 
-    with open(args.label_config, "r", encoding="utf-8") as f:
+    if args.label_config:
+        label_config_path = args.label_config
+    elif os.path.exists(args.data_dir):
+        label_config_path = r"C:\Programming\akkadian\data\processed\label_configs.json"
+    else:
+        from huggingface_hub import hf_hub_download
+        label_config_path = hf_hub_download(repo_id=args.data_dir, filename="configs/label_configs.json", repo_type="dataset")
+    with open(label_config_path, "r", encoding="utf-8") as f:
         label_configs = json.load(f)
     tasks = ["period", "genre", "language", "provenience"]
     num_labels = {task: len(label_configs[task]["labels"]) for task in tasks}
-    logger.info(f"Metadata head sizes from {args.label_config}: {num_labels}")
+    logger.info(f"Metadata head sizes from {label_config_path}: {num_labels}")
 
     logger.info(f"Initializing {args.model_name}...")
     model = MBertMultiTask(
