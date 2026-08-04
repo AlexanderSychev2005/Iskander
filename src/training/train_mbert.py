@@ -372,6 +372,16 @@ def train():
         weight_decay=0.01,
         fp16=(args.precision == "fp16"),
         bf16=(args.precision == "bf16"),
+        # BertForMaskedLM ties cls.predictions.decoder.weight to
+        # bert.embeddings.word_embeddings.weight (standard tied-embeddings
+        # MLM head) -- two state_dict keys aliasing one tensor. A real
+        # PreTrainedModel's own save_pretrained() knows to de-duplicate this
+        # for safetensors, but MBertMultiTask is a plain nn.Module wrapper,
+        # so Trainer's generic safetensors save crashes on the shared-memory
+        # check. Fall back to the older pickle-based .bin format, which has
+        # no such restriction (untrusted-checkpoint deserialization risk is
+        # irrelevant here -- these are only ever our own checkpoints).
+        save_safetensors=False,
         dataloader_num_workers=args.num_workers,
         report_to=["tensorboard"],
         label_names=["labels", "period_labels", "genre_labels", "language_labels", "provenience_labels"],
