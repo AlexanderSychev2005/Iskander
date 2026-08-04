@@ -421,6 +421,17 @@ def train():
     num_labels = {task: len(label_configs[task]["labels"]) for task in tasks}
     logger.info(f"Metadata head sizes from {label_config_path}: {num_labels}")
 
+    # TrainingArguments(logging_dir=...) is deprecated in favor of this env
+    # var (transformers >= 5.x) -- must be set before the TensorBoardCallback
+    # reads it in on_train_begin.
+    os.environ["TENSORBOARD_LOGGING_DIR"] = os.path.join(args.save_dir, "runs")
+
+    # torch_compile only pays off on Ampere+ (tensor-core generation the
+    # compiler actually targets); on T4/Turing it just adds ~30s of upfront
+    # compile time and prints "Not enough SMs to use max_autotune_gemm mode"
+    # for no steady-state speedup.
+    use_compile = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
+
     logger.info("Initializing model...")
     model = AkkadianModel(
         vocab_size=len(tokenizer.vocab), hidden_size=args.hidden_size,
@@ -446,10 +457,9 @@ def train():
         warmup_steps=500,
         fp16=(args.precision == "fp16"),
         bf16=(args.precision == "bf16"),
-        torch_compile=True, # Включено по просьбе пользователя (надеемся, что без inf)
+        torch_compile=use_compile,
         dataloader_num_workers=args.num_workers,
         report_to=["tensorboard"],
-        logging_dir=os.path.join(args.save_dir, "runs"),
         label_names=["labels", "unk_labels", "period_labels", "genre_labels", "language_labels", "provenience_labels"],
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
