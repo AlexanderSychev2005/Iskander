@@ -302,6 +302,11 @@ def train():
     parser.add_argument("--data_dir", type=str, default=r"C:\Programming\akkadian\data\processed\hf_dataset", help="Path to jsonl datasets or HF Repo ID")
     parser.add_argument("--field", type=str, choices=["signs", "text"], default="signs", help="'signs' trains on cuneiform glyphs, 'text' on Latin transliteration -- two disjoint vocabs/tracks")
     parser.add_argument("--vocab_file", type=str, default=None, help="Path to vocab.json; defaults to vocab.json for --field signs, vocab_translit.json for --field text")
+    # Real token-length distribution (measured against combined_unique.jsonl):
+    # signs median=9, p99=32, p99.9=54 -- 128 was wasting ~90% of every
+    # sequence as PAD, which self-attention burns quadratically. text median=26,
+    # p99.9=164, so 128 is already a reasonable fit there and is left alone.
+    parser.add_argument("--max_length", type=int, default=None, help="Token sequence length (pad/truncate target); defaults to 64 for --field signs (covers p99.9), 128 for --field text")
     parser.add_argument("--label_config", type=str, default=None, help="Path to label_configs.json (sizes the metadata heads); auto-resolved from --data_dir if omitted")
     parser.add_argument("--save_dir", type=str, default=None, help="Where to save checkpoints and logs; defaults to 'checkpoints' for --field signs, 'checkpoints_translit' for --field text")
     parser.add_argument("--batch_size", type=int, default=128, help="Batch size for training")
@@ -333,6 +338,8 @@ def train():
     args = parser.parse_args()
     if args.save_dir is None:
         args.save_dir = "checkpoints_translit" if args.field == "text" else "checkpoints"
+    if args.max_length is None:
+        args.max_length = 128 if args.field == "text" else 64
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -367,7 +374,7 @@ def train():
     tokenizer = CharacterTokenizer()
     tokenizer.load(vocab_file)
 
-    logger.info(f"Loading datasets from {args.data_dir}...")
+    logger.info(f"Loading datasets from {args.data_dir}... (max_length={args.max_length})")
     if "/" in args.data_dir and not os.path.exists(args.data_dir):
         hf_ds = load_dataset(args.data_dir)
     else:
@@ -380,9 +387,9 @@ def train():
     # collator uses for its own synthetic gaps, matching how prepare_oracc.py
     # already does this for the 'signs' side.
     def tokenize_signs(example):
-        return {"input_ids": tokenizer.encode_signs(example["signs"], add_special_tokens=True, max_length=128)}
+        return {"input_ids": tokenizer.encode_signs(example["signs"], add_special_tokens=True, max_length=args.max_length)}
     def tokenize_text(example):
-        return {"input_ids": tokenizer.encode(collapse_ellipsis_gaps(example["text"]), add_special_tokens=True, max_length=128)}
+        return {"input_ids": tokenizer.encode(collapse_ellipsis_gaps(example["text"]), add_special_tokens=True, max_length=args.max_length)}
     # num_proc parallelizes this one-time preprocessing pass across CPU cores
     # -- this is pure-Python per-example tokenization (not batched), so on a
     # single core it's a real, avoidable chunk of wall-clock time before
