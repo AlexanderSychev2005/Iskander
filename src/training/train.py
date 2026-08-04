@@ -456,6 +456,7 @@ def train():
         learning_rate=args.lr,
         lr_scheduler_type="cosine",
         warmup_steps=500,
+        weight_decay=0.01,
         fp16=(args.precision == "fp16"),
         bf16=(args.precision == "bf16"),
         torch_compile=use_compile,
@@ -463,8 +464,14 @@ def train():
         report_to=["tensorboard"],
         label_names=["labels", "unk_labels", "period_labels", "genre_labels", "language_labels", "provenience_labels"],
         load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
+        # combined eval_loss is MLM-dominated but still gets dragged around by
+        # the 4 auxiliary heads (period/genre/language/provenience) -- e.g. it
+        # picked step 2500 as "best" even though those heads were already
+        # declining there. mlm_acc (top-1 restoration accuracy) is the metric
+        # that actually reflects the primary task; same convention kyivan
+        # uses (metric_for_best_model="top1_accuracy" there).
+        metric_for_best_model="mlm_acc",
+        greater_is_better=True,
     )
 
     trainer = Trainer(
