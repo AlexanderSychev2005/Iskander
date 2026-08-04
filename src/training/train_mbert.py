@@ -94,6 +94,26 @@ def inject_akkadian_tokens(tokenizer, new_tokens, first_free_slot=3):
     )
     return new_tokenizer, n_injected
 
+class TiedWeightSafeTrainer(Trainer):
+    """BertForMaskedLM ties cls.predictions.decoder.weight/bias to
+    bert.embeddings.word_embeddings.weight/bert.embeddings... (standard
+    tied-embeddings MLM head), so state_dict() has two keys aliasing the
+    same tensor storage. A real PreTrainedModel's own save_pretrained()
+    de-duplicates this automatically before writing safetensors;
+    MBertMultiTask is a plain nn.Module wrapper, so Trainer routes through
+    the generic "not a PreTrainedModel" save path in this transformers
+    version, which calls safetensors.torch.save_file() directly on the raw
+    state_dict with no format fallback (TrainingArguments.save_safetensors
+    no longer exists to opt out). Cloning each tensor gives every key its
+    own storage, satisfying safetensors' shared-memory check -- the live
+    model's actual weight tying during training is untouched, this only
+    affects what gets written to disk."""
+    def _save(self, output_dir=None, state_dict=None):
+        if state_dict is None:
+            state_dict = self.model.state_dict()
+        state_dict = {k: v.clone() for k, v in state_dict.items()}
+        super()._save(output_dir, state_dict=state_dict)
+
 class LogToFileCallback(TrainerCallback):
     # report_to="none" leaves Trainer's default PrinterCallback printing
     # step/eval metrics straight to stdout (bypasses the `logging` module),
@@ -372,16 +392,6 @@ def train():
         weight_decay=0.01,
         fp16=(args.precision == "fp16"),
         bf16=(args.precision == "bf16"),
-        # BertForMaskedLM ties cls.predictions.decoder.weight to
-        # bert.embeddings.word_embeddings.weight (standard tied-embeddings
-        # MLM head) -- two state_dict keys aliasing one tensor. A real
-        # PreTrainedModel's own save_pretrained() knows to de-duplicate this
-        # for safetensors, but MBertMultiTask is a plain nn.Module wrapper,
-        # so Trainer's generic safetensors save crashes on the shared-memory
-        # check. Fall back to the older pickle-based .bin format, which has
-        # no such restriction (untrusted-checkpoint deserialization risk is
-        # irrelevant here -- these are only ever our own checkpoints).
-        save_safetensors=False,
         dataloader_num_workers=args.num_workers,
         report_to=["tensorboard"],
         label_names=["labels", "period_labels", "genre_labels", "language_labels", "provenience_labels"],
@@ -390,7 +400,7 @@ def train():
         greater_is_better=False,
     )
 
-    trainer = Trainer(
+    trainer = TiedWeightSafeTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
