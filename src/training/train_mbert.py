@@ -183,7 +183,17 @@ def make_preprocess_logits_for_metrics(banned_ids):
     banned = torch.tensor(sorted(banned_ids), dtype=torch.long)
 
     def preprocess_logits_for_metrics(logits, labels):
-        mlm_logits = logits["logits"].clone()
+        # MBertMultiTask has no HF PretrainedConfig, so Trainer's
+        # prediction_step can't filter its output dict via
+        # model.config.keys_to_ignore_at_inference -- it converts the dict
+        # into a plain positional tuple (dropping "loss") before calling
+        # this function. Must index by position, matching
+        # MBertMultiTask.forward's dict insertion order: logits,
+        # period_logits, genre_logits, language_logits, provenience_logits.
+        # Same root cause as AkkadianModel's own config-less-model handling
+        # in train.py, which is why that file's version of this function
+        # already indexes positionally instead of by key.
+        mlm_logits = logits[0].clone()
         mlm_logits[..., banned.to(mlm_logits.device)] = float("-inf")
         mlm_top5 = torch.topk(mlm_logits, k=5, dim=-1).indices
 
@@ -200,7 +210,7 @@ def make_preprocess_logits_for_metrics(banned_ids):
         target_logits = mlm_logits.gather(-1, safe_labels.unsqueeze(-1))
         rank = (mlm_logits > target_logits).sum(dim=-1) + 1
 
-        meta_preds = [torch.argmax(logits[f"{t}_logits"], dim=-1) for t in ["period", "genre", "language", "provenience"]]
+        meta_preds = [torch.argmax(logits[i], dim=-1) for i in range(1, 5)]
         return (mlm_top5, rank, *meta_preds)
 
     return preprocess_logits_for_metrics
