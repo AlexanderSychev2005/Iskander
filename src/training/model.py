@@ -239,7 +239,7 @@ class AkkadianModel(nn.Module):
                 loss += meta_weight * loss_meta_fct(provenience_logits, provenience_labels)
             
         if return_dict:
-            return {
+            out = {
                 "loss": loss,
                 "logits": logits,
                 "logits_unk": logits_unk,
@@ -248,8 +248,16 @@ class AkkadianModel(nn.Module):
                 "genre_logits": genre_logits,
                 "language_logits": language_logits,
                 "provenience_logits": provenience_logits,
-                "attentions": [layer.attention.self.attn_weights for layer in self.encoder.layer] if output_attentions else None
             }
+            # Omit the key entirely rather than setting it to None: this dict
+            # has no HF PretrainedConfig backing it, so Trainer's eval loop
+            # (trainer.py's prediction_step) can't filter it via
+            # model.config.keys_to_ignore_at_inference -- it just takes every
+            # non-"loss" value as a "logits" tensor to pad/gather across
+            # processes, and a bare None there crashes pad_across_processes.
+            if output_attentions:
+                out["attentions"] = [layer.attention.self.attn_weights for layer in self.encoder.layer]
+            return out
         
         outputs = (logits, logits_unk, emb_context, period_logits, genre_logits, language_logits, provenience_logits)
         if output_attentions:
