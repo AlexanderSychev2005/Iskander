@@ -11,7 +11,7 @@ from sklearn.metrics import f1_score
 import numpy as np
 from transformers import (
     AutoTokenizer, AutoModelForMaskedLM, DataCollatorForLanguageModeling,
-    Trainer, TrainingArguments, EarlyStoppingCallback,
+    Trainer, TrainingArguments, EarlyStoppingCallback, TrainerCallback,
 )
 from datasets import load_from_disk, load_dataset
 from tokenizers import Tokenizer as RawTokenizer
@@ -93,6 +93,15 @@ def inject_akkadian_tokens(tokenizer, new_tokens, first_free_slot=3):
         strip_accents=tokenizer.strip_accents,
     )
     return new_tokenizer, n_injected
+
+class LogToFileCallback(TrainerCallback):
+    # report_to="none" leaves Trainer's default PrinterCallback printing
+    # step/eval metrics straight to stdout (bypasses the `logging` module),
+    # so the FileHandler on the module logger never sees them -- same fix
+    # applied to train.py's LogToFileCallback.
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs is not None:
+            logging.getLogger(__name__).info(f"step {state.global_step}: {logs}")
 
 # mBERT baseline, following Lazar et al. 2021's finding that a pretrained
 # multilingual model finetuned on Akkadian outperforms a from-scratch model
@@ -238,14 +247,24 @@ def train():
     parser.add_argument("--label_config", type=str, default=r"C:\Programming\akkadian\data\processed\label_configs.json")
     parser.add_argument("--model_name", type=str, default="bert-base-multilingual-cased")
     parser.add_argument("--save_dir", type=str, default="checkpoints_mbert")
-    parser.add_argument("--batch_size", type=int, default=32, help="mBERT (~179M params) is much larger than AkkadianModel -- start smaller and raise if memory allows")
+    # 64 is untested on real hardware -- mBERT (~179M params, 12 layers) is
+    # much bigger than AkkadianModel (~41M), so this is a starting point for
+    # a 16GB Colab GPU, not a measured value like the signs track's batch
+    # size. Test and adjust the same way we tuned the signs track's batch/lr.
+    parser.add_argument("--batch_size", type=int, default=64, help="Starting point for a 16GB GPU -- untested, adjust based on actual VRAM usage")
     parser.add_argument("--grad_accum", type=int, default=4)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--lr", type=float, default=2e-5, help="Standard BERT finetuning LR, an order of magnitude below the from-scratch run")
     parser.add_argument("--epochs", type=int, default=20, help="Lazar et al. 2021 finetune mBERT for 20 epochs on Akkadian; matched here as the closest precedent")
     parser.add_argument("--eval_steps", type=int, default=500)
     parser.add_argument("--early_stopping_patience", type=int, default=4)
-    parser.add_argument("--max_length", type=int, default=128)
+    # Real token-length distribution (measured against combined_unique.jsonl
+    # with mBERT's own WordPiece tokenizer): median=18, p99=72, p99.9=120 --
+    # 96 covers 99.7% of examples at little more than half the attention
+    # FLOPs of 128.
+    parser.add_argument("--max_length", type=int, default=96)
+    parser.add_argument("--precision", type=str, choices=["fp32", "fp16", "bf16"], default="fp16", help="Mixed precision mode -- fp16 for T4/Colab, bf16 for Ampere+ (A100/newer)")
+    parser.add_argument("--resume_from_checkpoint", type=str, default=None, help="Path to a specific checkpoint, or 'auto' to resume from the latest one in --save_dir")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -260,10 +279,10 @@ def train():
     logger = logging.getLogger(__name__)
     logger.info(f"Using device: {device}")
 
-    # use_fast=False: reusing [unusedN] slots means mutating tokenizer.vocab /
-    # ids_to_tokens directly, which only the plain-Python slow tokenizer
-    # exposes as writable dicts (the fast tokenizer's vocab is Rust-backed).
-    # WordPiece tokenization itself is identical between the two for BERT.
+    # use_fast=False: inject_akkadian_tokens() rebuilds a BertTokenizer from a
+    # modified vocab dict, which only the plain-Python slow tokenizer class
+    # supports as a constructor argument. WordPiece tokenization itself is
+    # identical between the two for BERT.
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=False)
 
     logger.info(f"Loading datasets from {args.data_dir}...")
@@ -313,6 +332,11 @@ def train():
         num_language=num_labels["language"], num_provenience=num_labels["provenience"],
     )
 
+    # TrainingArguments(logging_dir=...) is deprecated in favor of this env
+    # var (transformers >= 5.x) -- must be set before the TensorBoardCallback
+    # reads it in on_train_begin.
+    os.environ["TENSORBOARD_LOGGING_DIR"] = os.path.join(args.save_dir, "runs")
+
     training_args = TrainingArguments(
         output_dir=args.save_dir,
         num_train_epochs=args.epochs,
@@ -328,9 +352,11 @@ def train():
         learning_rate=args.lr,
         lr_scheduler_type="cosine",
         warmup_steps=500,
-        bf16=True,
+        weight_decay=0.01,
+        fp16=(args.precision == "fp16"),
+        bf16=(args.precision == "bf16"),
         dataloader_num_workers=args.num_workers,
-        report_to="none",
+        report_to=["tensorboard"],
         label_names=["labels", "period_labels", "genre_labels", "language_labels", "provenience_labels"],
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
@@ -345,11 +371,12 @@ def train():
         data_collator=collator,
         compute_metrics=compute_metrics,
         preprocess_logits_for_metrics=make_preprocess_logits_for_metrics(tokenizer.all_special_ids),
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience)],
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience), LogToFileCallback()],
     )
 
     logger.info("Starting training with Hugging Face Trainer...")
-    trainer.train()
+    resume = True if args.resume_from_checkpoint == "auto" else args.resume_from_checkpoint
+    trainer.train(resume_from_checkpoint=resume)
 
     logger.info("Training complete. Saving final state and metrics...")
     trainer.save_model(os.path.join(args.save_dir, "final_model"))
