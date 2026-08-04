@@ -14,6 +14,10 @@ from transformers import (
     Trainer, TrainingArguments, EarlyStoppingCallback,
 )
 from datasets import load_from_disk, load_dataset
+from tokenizers import Tokenizer as RawTokenizer
+from tokenizers.models import WordPiece as WordPieceModel
+from tokenizers.trainers import WordPieceTrainer
+from tokenizers.pre_tokenizers import Whitespace
 
 # The two real-damage signals that survive into the 'text' column (see
 # prepare_hf_dataset.py's clean_transliteration): a standalone 'x' is one
@@ -36,6 +40,59 @@ def mark_damage_signals(text):
     text = ELLIPSIS_RE.sub(f" {UNKNOWN_GAP_TOKEN} ", text)
     text = LONE_X_RE.sub(UNCLEAR_SIGN_TOKEN, text)
     return re.sub(r"\s+", " ", text).strip()
+
+def learn_akkadian_tokens(texts, existing_vocab, n_tokens=97, target_vocab_size=8000, min_frequency=10):
+    """Reproduce Lazar et al. 2021's other free-token trick: "we assign its
+    99 available free tokens, optimizing for maximum likelihood by the
+    WordPiece tokenization algorithm" -- they never published the exact
+    token list, so we relearn it here by training a fresh WordPiece
+    vocabulary on our own Akkadian transliteration corpus and keeping the
+    highest-frequency pieces mBERT doesn't already have. Without this,
+    Akkadian-specific sign sequences get chopped into excessive fragments by
+    mBERT's stock (mostly-modern-language) WordPiece vocab."""
+    tok = RawTokenizer(WordPieceModel(unk_token="[UNK]"))
+    tok.pre_tokenizer = Whitespace()
+    trainer = WordPieceTrainer(
+        vocab_size=target_vocab_size, min_frequency=min_frequency,
+        special_tokens=["[UNK]"], continuing_subword_prefix="##",
+    )
+    tok.train_from_iterator(texts, trainer=trainer)
+    learned = sorted(tok.get_vocab().items(), key=lambda kv: kv[1])  # id order ~ frequency rank
+    candidates = [t for t, _ in learned if t not in existing_vocab and t != "[UNK]" and t.replace("##", "")]
+    return candidates[:n_tokens]
+
+def inject_akkadian_tokens(tokenizer, new_tokens, first_free_slot=3):
+    """Rename mBERT's unused [unusedN] vocab slots (N >= first_free_slot,
+    since 1-2 are already claimed by our damage sentinels) to the learned
+    Akkadian tokens, keeping the same embedding row id -- no vocab growth,
+    no resize_token_embeddings() needed, exactly the slot-reuse mechanism
+    Lazar et al. 2021 describe.
+
+    In this transformers version BertTokenizer's `.vocab` is a detached
+    snapshot dict -- mutating it in place does not reach the actual Rust
+    WordPiece tokenizer used for encoding (verified: get_vocab() and real
+    tokenization both stay unchanged). The only reliable way to rename a
+    slot is to rebuild the tokenizer from a modified vocab dict, so this
+    returns a *new* tokenizer instance rather than mutating in place."""
+    from transformers import BertTokenizer
+    vocab = dict(tokenizer.get_vocab())
+    n_injected = 0
+    for i, new_tok in enumerate(new_tokens):
+        slot = f"[unused{i + first_free_slot}]"
+        if slot not in vocab:
+            break
+        vocab[new_tok] = vocab.pop(slot)
+        n_injected += 1
+
+    new_tokenizer = BertTokenizer(
+        vocab=vocab, do_lower_case=tokenizer.do_lower_case,
+        unk_token=tokenizer.unk_token, sep_token=tokenizer.sep_token,
+        pad_token=tokenizer.pad_token, cls_token=tokenizer.cls_token,
+        mask_token=tokenizer.mask_token,
+        tokenize_chinese_chars=tokenizer.tokenize_chinese_chars,
+        strip_accents=tokenizer.strip_accents,
+    )
+    return new_tokenizer, n_injected
 
 # mBERT baseline, following Lazar et al. 2021's finding that a pretrained
 # multilingual model finetuned on Akkadian outperforms a from-scratch model
@@ -120,8 +177,22 @@ def make_preprocess_logits_for_metrics(banned_ids):
         mlm_logits = logits["logits"].clone()
         mlm_logits[..., banned.to(mlm_logits.device)] = float("-inf")
         mlm_top5 = torch.topk(mlm_logits, k=5, dim=-1).indices
+
+        # Full-vocab rank of the true token, computed here (not in
+        # compute_metrics) so we never have to hold the full (B, S, V)
+        # logits in the accumulated eval predictions -- same convention as
+        # evaluate.py's evaluate_top_k: rank = 1 + count of logits that beat
+        # the target's own logit. labels[0] is the primary MLM "labels"
+        # tensor (label_names[0]); -100 (unmasked) positions get clamped to
+        # a dummy valid index and filtered out downstream via the same mask
+        # compute_metrics already applies for mlm_acc/top3/top5.
+        mlm_labels = labels[0]
+        safe_labels = mlm_labels.clamp(min=0)
+        target_logits = mlm_logits.gather(-1, safe_labels.unsqueeze(-1))
+        rank = (mlm_logits > target_logits).sum(dim=-1) + 1
+
         meta_preds = [torch.argmax(logits[f"{t}_logits"], dim=-1) for t in ["period", "genre", "language", "provenience"]]
-        return (mlm_top5, *meta_preds)
+        return (mlm_top5, rank, *meta_preds)
 
     return preprocess_logits_for_metrics
 
@@ -132,7 +203,7 @@ def compute_metrics(eval_pred):
 
     task_names = ["period", "genre", "language", "provenience"]
     for i, task in enumerate(task_names):
-        task_preds = preds[i + 1].reshape(-1)
+        task_preds = preds[i + 2].reshape(-1)
         task_labels = label_ids[i + 1].reshape(-1)
         mask = task_labels != -100
         if not mask.any():
@@ -144,6 +215,7 @@ def compute_metrics(eval_pred):
         metrics[f"{task}_macro_f1"] = float(f1_score(task_labels, task_preds, average="macro", zero_division=0))
 
     mlm_preds = preds[0].reshape(-1, 5)
+    mlm_rank = preds[1].reshape(-1)
     mlm_labels = label_ids[0].reshape(-1)
     mlm_mask = mlm_labels != -100
     if mlm_mask.any():
@@ -152,8 +224,11 @@ def compute_metrics(eval_pred):
         metrics["mlm_acc"] = float((masked_preds[:, 0] == masked_labels).mean())
         metrics["mlm_top3_acc"] = float(np.any(masked_preds[:, :3] == masked_labels[:, None], axis=1).mean())
         metrics["mlm_top5_acc"] = float(np.any(masked_preds == masked_labels[:, None], axis=1).mean())
+        # Same metric Lazar et al. 2021 report in their Table 2 (MRR + Hit@5)
+        # -- lets us cite a directly comparable number instead of only CER.
+        metrics["mlm_mrr"] = float((1.0 / mlm_rank[mlm_mask]).mean())
     else:
-        metrics["mlm_acc"] = metrics["mlm_top3_acc"] = metrics["mlm_top5_acc"] = 0.0
+        metrics["mlm_acc"] = metrics["mlm_top3_acc"] = metrics["mlm_top5_acc"] = metrics["mlm_mrr"] = 0.0
 
     return metrics
 
@@ -185,18 +260,32 @@ def train():
     logger = logging.getLogger(__name__)
     logger.info(f"Using device: {device}")
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name)
-    # Reuse 2 of mBERT's existing [unusedN] embedding rows -- add_special_tokens
-    # on a token string already in the vocab only registers it as special
-    # (so the tokenizer stops splitting it and the masking collator stops
-    # masking it), it does not grow the vocab or add a new row.
-    tokenizer.add_special_tokens({"additional_special_tokens": [UNCLEAR_SIGN_TOKEN, UNKNOWN_GAP_TOKEN]})
+    # use_fast=False: reusing [unusedN] slots means mutating tokenizer.vocab /
+    # ids_to_tokens directly, which only the plain-Python slow tokenizer
+    # exposes as writable dicts (the fast tokenizer's vocab is Rust-backed).
+    # WordPiece tokenization itself is identical between the two for BERT.
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=False)
 
     logger.info(f"Loading datasets from {args.data_dir}...")
     if "/" in args.data_dir and not os.path.exists(args.data_dir):
         hf_ds = load_dataset(args.data_dir)
     else:
         hf_ds = load_from_disk(args.data_dir)
+
+    # Lazar et al. 2021's other free-token trick (see learn_akkadian_tokens
+    # docstring) -- reserve slots 3-99 (1-2 go to the damage sentinels below)
+    # for WordPiece pieces learned from our own Akkadian corpus, so common
+    # sign/word sequences aren't needlessly fragmented by mBERT's stock vocab.
+    logger.info("Learning Akkadian-specific WordPiece tokens for mBERT's free vocab slots...")
+    akkadian_tokens = learn_akkadian_tokens(hf_ds["train"]["text"], set(tokenizer.get_vocab().keys()), n_tokens=97)
+    tokenizer, n_injected = inject_akkadian_tokens(tokenizer, akkadian_tokens, first_free_slot=3)
+    logger.info(f"Injected {n_injected} Akkadian tokens into mBERT's unused[3..{2 + n_injected}] slots")
+
+    # Reuse 2 of mBERT's existing [unusedN] embedding rows -- add_special_tokens
+    # on a token string already in the vocab only registers it as special
+    # (so the tokenizer stops splitting it and the masking collator stops
+    # masking it), it does not grow the vocab or add a new row.
+    tokenizer.add_special_tokens({"additional_special_tokens": [UNCLEAR_SIGN_TOKEN, UNKNOWN_GAP_TOKEN]})
 
     # Same dataset as train.py -- we tokenize the 'text' (transliteration)
     # column with mBERT's own WordPiece tokenizer; train.py instead tokenizes
@@ -205,7 +294,7 @@ def train():
         marked = [mark_damage_signals(t) for t in examples["text"]]
         return tokenizer(marked, truncation=True, max_length=args.max_length)
 
-    hf_ds = hf_ds.map(tokenize_fn, batched=True, remove_columns=["text", "signs"])
+    hf_ds = hf_ds.map(tokenize_fn, batched=True, remove_columns=["text", "signs"], num_proc=max(1, os.cpu_count() - 1))
     train_dataset = hf_ds["train"]
     val_dataset = hf_ds["validation"]
     logger.info(f"Loaded {len(train_dataset)} training samples.")
