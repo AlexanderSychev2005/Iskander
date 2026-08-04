@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime
 from sklearn.metrics import f1_score
-from transformers import Trainer, TrainingArguments, EarlyStoppingCallback
+from transformers import Trainer, TrainingArguments, EarlyStoppingCallback, TrainerCallback
 from datasets import load_from_disk, load_dataset
 
 import sys
@@ -16,6 +16,18 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from src.training.tokenizer import CharacterTokenizer, collapse_ellipsis_gaps
 from src.training.model import AkkadianModel
+
+class LogToFileCallback(TrainerCallback):
+    # report_to="none" leaves Trainer's default PrinterCallback printing
+    # step/eval metrics straight to stdout (bypasses the `logging` module),
+    # so the FileHandler on the module logger never sees them -- only the
+    # explicit logger.info(...) calls elsewhere in this script land in
+    # training_log_*.txt. This forwards every on_log payload (loss,
+    # eval_loss, eval metrics, lr) into that same file.
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs is not None:
+            logging.getLogger(__name__).info(f"step {state.global_step}: {logs}")
+
 
 class AkkadianPhysicalCollator:
     # Calibrated against the actual corpus, the same way Eremeev calibrates
@@ -429,7 +441,8 @@ def train():
         bf16=(args.precision == "bf16"),
         torch_compile=True, # Включено по просьбе пользователя (надеемся, что без inf)
         dataloader_num_workers=args.num_workers,
-        report_to="none",
+        report_to=["tensorboard"],
+        logging_dir=os.path.join(args.save_dir, "runs"),
         label_names=["labels", "unk_labels", "period_labels", "genre_labels", "language_labels", "provenience_labels"],
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
@@ -444,7 +457,7 @@ def train():
         data_collator=collator,
         compute_metrics=compute_metrics,
         preprocess_logits_for_metrics=make_preprocess_logits_for_metrics(non_content_ids(tokenizer)),
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience)],
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience), LogToFileCallback()],
     )
     
     logger.info("Starting training with Hugging Face Trainer...")
