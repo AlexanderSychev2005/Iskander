@@ -132,7 +132,7 @@ class LogToFileCallback(TrainerCallback):
 # the two runs are comparable apart from the backbone itself.
 
 class MBertMultiTask(nn.Module):
-    def __init__(self, model_name, num_period, num_genre, num_language, num_provenience):
+    def __init__(self, model_name, num_period, num_genre, num_language, num_provenience, meta_weight=1.0):
         super().__init__()
         self.backbone = AutoModelForMaskedLM.from_pretrained(model_name)
         hidden_size = self.backbone.config.hidden_size
@@ -140,6 +140,7 @@ class MBertMultiTask(nn.Module):
         self.genre_head = nn.Linear(hidden_size, num_genre)
         self.language_head = nn.Linear(hidden_size, num_language)
         self.provenience_head = nn.Linear(hidden_size, num_provenience)
+        self.meta_weight = meta_weight
 
     def forward(self, input_ids, attention_mask=None, labels=None,
                 period_labels=None, genre_labels=None, language_labels=None, provenience_labels=None):
@@ -159,15 +160,19 @@ class MBertMultiTask(nn.Module):
             loss_meta_fct = nn.CrossEntropyLoss(ignore_index=-100, label_smoothing=0.1)
             loss = 0.0
 
-            # Same task weighting as AkkadianModel: MLM=3.0, each metadata head=0.25.
+            # MLM=3.0 (matches AkkadianModel); meta_weight defaults to 1.0 -- raised
+            # from the original 0.25 (MLM:meta = 12:1) after comparing against
+            # Aeneas' own multi-task loss weights (restoration=3, region=2,
+            # date=1.25 -- roughly 3:2, not 12:1), and noting our metadata heads
+            # (esp. provenience, period) were still climbing when MLM had
+            # plateaued. Configurable via --meta_weight for further tuning.
             if labels is not None and (labels != -100).any():
                 loss += 3.0 * loss_mlm_fct(mlm_logits.view(-1, mlm_logits.size(-1)), labels.view(-1))
 
-            meta_weight = 0.25
             for logits, lbl in [(period_logits, period_labels), (genre_logits, genre_labels),
                                  (language_logits, language_labels), (provenience_logits, provenience_labels)]:
                 if lbl is not None and (lbl != -100).any():
-                    loss += meta_weight * loss_meta_fct(logits, lbl)
+                    loss += self.meta_weight * loss_meta_fct(logits, lbl)
 
         return {
             "loss": loss,
@@ -285,6 +290,7 @@ def train():
     parser.add_argument("--grad_accum", type=int, default=4)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--lr", type=float, default=2e-5, help="Standard BERT finetuning LR, an order of magnitude below the from-scratch run")
+    parser.add_argument("--meta_weight", type=float, default=1.0, help="Loss weight for each metadata head (period/genre/language/provenience); MLM restoration is fixed at 3.0")
     parser.add_argument("--epochs", type=int, default=20, help="Lazar et al. 2021 finetune mBERT for 20 epochs on Akkadian; matched here as the closest precedent")
     parser.add_argument("--eval_steps", type=int, default=500)
     parser.add_argument("--early_stopping_patience", type=int, default=4)
@@ -367,6 +373,7 @@ def train():
     model = MBertMultiTask(
         args.model_name, num_period=num_labels["period"], num_genre=num_labels["genre"],
         num_language=num_labels["language"], num_provenience=num_labels["provenience"],
+        meta_weight=args.meta_weight,
     )
 
     # TrainingArguments(logging_dir=...) is deprecated in favor of this env
