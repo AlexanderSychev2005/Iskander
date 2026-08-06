@@ -1,4 +1,5 @@
 import os
+import random
 import re
 import torch
 torch.set_float32_matmul_precision('high')
@@ -268,7 +269,9 @@ class MBertMultiTask(nn.Module):
 
 def build_tablet_image_index(crops_dir, reviewed_only=True):
     """tablet_id (CDLI "P######" form, matching prepare_hf_dataset.py's
-    to_examples()) -> crop image path. Only used when --use_image; ids
+    to_examples()) -> PIL.Image (opened eagerly, not a lazy path -- keeps
+    _load_image agnostic to whether the index came from local files or
+    build_tablet_image_index_from_hf). Only used when --use_image; ids
     outside this index (the overwhelming majority of the corpus -- images
     exist for a small collected subset, not every tablet) fall back to an
     all-zero placeholder in the collator, same as Aeneas's own training
@@ -289,7 +292,25 @@ def build_tablet_image_index(crops_dir, reviewed_only=True):
             tablet_id = "P" + raw_id.zfill(6) if raw_id.isdigit() else raw_id
             path = os.path.join(crops_dir, f"{row['id']}.jpg")
             if os.path.exists(path):
-                index[tablet_id] = path
+                try:
+                    index[tablet_id] = Image.open(path).convert("RGB")
+                except Exception:
+                    pass
+    return index
+
+def build_tablet_image_index_from_hf(repo_id):
+    """Same tablet_id -> PIL.Image mapping as build_tablet_image_index, but
+    pulled straight from the "vision" HF config instead of a local crops
+    folder -- so a training box only needs `git pull` + this script, no
+    scp'ing image folders around. All three splits are loaded and merged
+    (train/validation/test): the index is purely "does this tablet have a
+    photo", split-membership is already handled by --data_dir's own splits."""
+    from datasets import load_dataset as _load_dataset
+    vision_ds = _load_dataset(repo_id, "vision")
+    index = {}
+    for split in vision_ds:
+        for row in vision_ds[split]:
+            index[row["tablet_id"]] = row["image"].convert("RGB")
     return index
 
 def mark_one_line_per_tablet(dataset):
@@ -329,29 +350,74 @@ class MBertCollator:
     mark_damage_signals()) is enough to keep them out of the mask targets
     here too -- no extra exclusion logic needed in this collator.
 
-    image_index (tablet_id -> crop path) is None when --use_image is off,
+    image_index (tablet_id -> PIL.Image) is None when --use_image is off,
     in which case no pixel_values key is produced at all -- MBertMultiTask
     with use_image=False never looks for one. img_transform selects
     train (augmented) vs eval (deterministic) processing -- see
     IMG_TRANSFORM_TRAIN/IMG_TRANSFORM_EVAL and TiedWeightSafeTrainer's
-    eval_data_collator swap."""
-    def __init__(self, tokenizer, mlm_probability=0.15, image_index=None, img_transform=IMG_TRANSFORM_EVAL):
+    eval_data_collator swap.
+
+    context_char_max (set only for the document-granularity dataset, where
+    ~5-8% of documents exceed mBERT's hard 512-token position-embedding
+    ceiling): instead of always keeping a long document's first max_length
+    tokens, follow Aeneas's own approach (predictingthepast/train/
+    dataloader.py -- context_char_min=25, context_char_max=768,
+    context_char_random=True for their Latin/character-level setup) --
+    sample a random character window per example, so the model sees every
+    *part* of a long document across training rather than only its
+    opening. Requires "text" to still be a raw (untokenized) column on the
+    dataset -- tokenization happens here, per batch, not once in train()'s
+    .map() step. training=True gives a random start position AND random
+    window length each call (a fresh crop every epoch, unlike a one-time
+    truncation); training=False (eval) takes a fixed window from the start
+    so repeated evaluate() calls stay reproducible -- a deliberate
+    departure from Aeneas's own eval-time random start, for the same
+    determinism reason IMG_TRANSFORM_EVAL skips augmentation."""
+    def __init__(self, tokenizer, mlm_probability=0.15, image_index=None, img_transform=IMG_TRANSFORM_EVAL,
+                 context_char_min=None, context_char_max=None, max_length=96, training=False):
+        self.tokenizer = tokenizer
         self.mlm_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, mlm_probability=mlm_probability)
         self.image_index = image_index
         self.img_transform = img_transform
+        self.context_char_min = context_char_min
+        self.context_char_max = context_char_max
+        self.max_length = max_length
+        self.training = training
         self._zero_image = torch.zeros(3, IMG_SIZE, IMG_SIZE)
 
     def _load_image(self, tablet_id):
-        path = self.image_index.get(tablet_id) if tablet_id else None
-        if path is None:
+        img = self.image_index.get(tablet_id) if tablet_id else None
+        if img is None:
             return self._zero_image
         try:
-            return self.img_transform(Image.open(path).convert("RGB"))
+            return self.img_transform(img)
         except Exception:
             return self._zero_image
 
+    def _window(self, text):
+        if not self.context_char_max or len(text) <= self.context_char_max:
+            return text
+        if self.training:
+            length = random.randint(min(self.context_char_min, len(text)), self.context_char_max)
+            start = random.randint(0, len(text) - length)
+            return text[start:start + length]
+        return text[:self.context_char_max]
+
+    def _tokenize(self, ex):
+        text = mark_damage_signals(self._window(ex["text"]))
+        enc = self.tokenizer(text, truncation=True, max_length=self.max_length)
+        # MBertMultiTask.forward() only accepts input_ids/attention_mask --
+        # drop token_type_ids (BertTokenizer returns it by default), same as
+        # the pre-tokenized path already implicitly does by only selecting
+        # these two keys out of each example.
+        return {"input_ids": enc["input_ids"], "attention_mask": enc["attention_mask"]}
+
     def __call__(self, examples):
-        batch = self.mlm_collator([{"input_ids": ex["input_ids"], "attention_mask": ex["attention_mask"]} for ex in examples])
+        if self.context_char_max is not None:
+            pre = [self._tokenize(ex) for ex in examples]
+        else:
+            pre = [{"input_ids": ex["input_ids"], "attention_mask": ex["attention_mask"]} for ex in examples]
+        batch = self.mlm_collator(pre)
         for task in ["period", "genre", "language", "provenience"]:
             batch[f"{task}_labels"] = torch.tensor([ex[f"{task}_labels"] for ex in examples], dtype=torch.long)
         if self.image_index is not None:
@@ -468,8 +534,12 @@ def train():
     parser.add_argument("--resume_from_checkpoint", type=str, default=None, help="Path to a specific checkpoint, or 'auto' to resume from the latest one in --save_dir")
     parser.add_argument("--use_image", action="store_true", help="Add the vision branch to period/genre/provenience (Aeneas-style concat) -- off by default, identical behavior to before this flag existed")
     parser.add_argument("--vision_init", type=str, choices=["scratch", "pretrained"], default="scratch", help="scratch: random-init ResNet18, fully trainable (matches Aeneas's own from-scratch ResNet-8). pretrained: frozen ImageNet ResNet18, A/B option")
-    parser.add_argument("--crops_dir", type=str, default=r"C:\Programming\akkadian\data\vision_dataset_final", help="Dir with <tablet id>.jpg crops + crops_manifest.jsonl (see finalize_vision_crops.py)")
-    parser.add_argument("--include_unreviewed", action="store_true", help="Also use tablets whose bbox was never manually reviewed (raw CuneiML bbox, ~58%% reliable) -- off by default")
+    parser.add_argument("--crops_dir", type=str, default=r"C:\Programming\akkadian\data\vision_dataset_final", help="Dir with <tablet id>.jpg crops + crops_manifest.jsonl (see finalize_vision_crops.py); ignored if --images_from_hf")
+    parser.add_argument("--include_unreviewed", action="store_true", help="Also use tablets whose bbox was never manually reviewed (raw CuneiML bbox, ~58%% reliable) -- off by default, and not meaningful with --images_from_hf (the published vision config is reviewed-only already)")
+    parser.add_argument("--images_from_hf", action="store_true", help="Load the vision config straight from --data_dir's HF repo instead of a local --crops_dir -- no scp'ing image folders to a training box")
+    parser.add_argument("--hf_config", type=str, default="default", help="Which HF dataset config to load when --data_dir is a Hub repo id (e.g. 'documents' for the tablet-granularity dataset)")
+    parser.add_argument("--context_char_min", type=int, default=32, help="Aeneas-style random text windowing (predictingthepast/train/dataloader.py): minimum window length in characters. Only used if --context_char_max is set")
+    parser.add_argument("--context_char_max", type=int, default=None, help="Enables random-window sampling of 'text' at collate time instead of always keeping the first --max_length tokens -- for the document-granularity dataset, where some documents badly exceed mBERT's 512-token position-embedding ceiling. None (default) = old behavior, pre-tokenize once and truncate from the start")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -490,9 +560,9 @@ def train():
     # identical between the two for BERT.
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, use_fast=False)
 
-    logger.info(f"Loading datasets from {args.data_dir}...")
+    logger.info(f"Loading datasets from {args.data_dir} (config={args.hf_config})...")
     if "/" in args.data_dir and not os.path.exists(args.data_dir):
-        hf_ds = load_dataset(args.data_dir)
+        hf_ds = load_dataset(args.data_dir, args.hf_config)
     else:
         hf_ds = load_from_disk(args.data_dir)
 
@@ -514,30 +584,48 @@ def train():
     # Same dataset as train.py -- we tokenize the 'text' (transliteration)
     # column with mBERT's own WordPiece tokenizer; train.py instead tokenizes
     # the sibling 'signs' column with our CharacterTokenizer.
-    def tokenize_fn(examples):
-        marked = [mark_damage_signals(t) for t in examples["text"]]
-        return tokenizer(marked, truncation=True, max_length=args.max_length)
-
-    hf_ds = hf_ds.map(tokenize_fn, batched=True, remove_columns=["text", "signs"], num_proc=max(1, os.cpu_count() - 1))
+    #
+    # --context_char_max skips pre-tokenization here entirely: MBertCollator
+    # tokenizes from raw "text" per batch instead, so it can draw a fresh
+    # random character window each time (see MBertCollator._window). "signs"
+    # is still unused by this script either way.
+    if args.context_char_max is not None:
+        hf_ds = hf_ds.remove_columns(["signs"])
+    else:
+        def tokenize_fn(examples):
+            marked = [mark_damage_signals(t) for t in examples["text"]]
+            return tokenizer(marked, truncation=True, max_length=args.max_length)
+        hf_ds = hf_ds.map(tokenize_fn, batched=True, remove_columns=["text", "signs"], num_proc=max(1, os.cpu_count() - 1))
     train_dataset = hf_ds["train"]
     val_dataset = hf_ds["validation"]
     logger.info(f"Loaded {len(train_dataset)} training samples.")
 
     image_index = None
     if args.use_image:
-        image_index = build_tablet_image_index(args.crops_dir, reviewed_only=not args.include_unreviewed)
-        logger.info(f"Vision branch on ({args.vision_init}): {len(image_index)} tablets have a real photo "
-                    f"({'including' if args.include_unreviewed else 'excluding'} unreviewed bboxes); "
-                    f"everything else gets an all-zero placeholder image")
+        if args.images_from_hf:
+            image_index = build_tablet_image_index_from_hf(args.data_dir)
+            logger.info(f"Vision branch on ({args.vision_init}): {len(image_index)} tablets have a real photo "
+                        f"(loaded from {args.data_dir}'s 'vision' config); everything else gets an all-zero placeholder image")
+        else:
+            image_index = build_tablet_image_index(args.crops_dir, reviewed_only=not args.include_unreviewed)
+            logger.info(f"Vision branch on ({args.vision_init}): {len(image_index)} tablets have a real photo "
+                        f"({'including' if args.include_unreviewed else 'excluding'} unreviewed bboxes); "
+                        f"everything else gets an all-zero placeholder image")
         # TRAIN only: cap each tablet to one real image showing per epoch
         # (see mark_one_line_per_tablet) -- eval keeps every line's real
         # image, since eval isn't fighting a training-time frequency bias.
+        # A no-op at document granularity (already one row per tablet).
         train_dataset = mark_one_line_per_tablet(train_dataset)
         n_marked = sum(1 for t in train_dataset["image_tablet_id"] if t)
-        logger.info(f"mark_one_line_per_tablet: {n_marked} lines (of {len(train_dataset)}) keep their real "
+        logger.info(f"mark_one_line_per_tablet: {n_marked} rows (of {len(train_dataset)}) keep their real "
                     f"image slot for training, one per tablet")
-    collator = MBertCollator(tokenizer, image_index=image_index, img_transform=IMG_TRANSFORM_TRAIN)
-    eval_collator = MBertCollator(tokenizer, image_index=image_index, img_transform=IMG_TRANSFORM_EVAL) if args.use_image else None
+    collator = MBertCollator(tokenizer, image_index=image_index, img_transform=IMG_TRANSFORM_TRAIN,
+                              context_char_min=args.context_char_min, context_char_max=args.context_char_max,
+                              max_length=args.max_length, training=True)
+    eval_collator = MBertCollator(tokenizer, image_index=image_index, img_transform=IMG_TRANSFORM_EVAL,
+                                   context_char_min=args.context_char_min, context_char_max=args.context_char_max,
+                                   max_length=args.max_length, training=False) \
+        if (args.use_image or args.context_char_max is not None) else None
 
     if args.label_config:
         label_config_path = args.label_config
