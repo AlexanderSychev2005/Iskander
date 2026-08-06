@@ -200,6 +200,15 @@ def to_examples(records):
         examples.append({
             "signs": data.get('signs', []),
             "text": clean_transliteration(data.get('raw')),
+            # Carried through (unused by either tokenizer) so a later training
+            # stage can look up a per-tablet image by id -- e.g.
+            # train_mbert.py's --use_image vision branch, which needs to know
+            # which physical tablet a line belongs to. Empty string (not
+            # None) so the Arrow 'string' column stays uniformly typed;
+            # ORACC-sourced rows get their own synthetic "oracc:..." id
+            # (see prepare_oracc.py), which simply won't match any collected
+            # image -- fine, since only CuneiML tablets have photos.
+            "tablet_id": data.get('tablet_id') or "",
             "period_labels": label_to_idx(map_period(data.get('period')), PERIOD_LABELS),
             "genre_labels": label_to_idx(map_genre(data.get('genre')), GENRE_LABELS),
             "language_labels": label_to_idx(map_language(data.get('language')), LANGUAGE_LABELS),
@@ -295,6 +304,7 @@ def main():
     features = Features({
         'signs': Sequence(Value('string')),
         'text': Value('string'),
+        'tablet_id': Value('string'),
         'period_labels': Value('int64'),
         'genre_labels': Value('int64'),
         'language_labels': Value('int64'),

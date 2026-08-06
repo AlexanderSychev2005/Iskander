@@ -17,6 +17,7 @@ dependencies = [
     "jupyter>=1.1.1",
     "lab>=8.10",
     "accelerate>=1.1.0",
+    "torchvision>=0.28.0",
 ]
 
 [[tool.uv.index]]

@@ -9,6 +9,9 @@ import logging
 from datetime import datetime
 from sklearn.metrics import f1_score
 import numpy as np
+from PIL import Image
+from torchvision import models as tv_models
+from torchvision import transforms as tv_transforms
 from transformers import (
     AutoTokenizer, AutoModelForMaskedLM, DataCollatorForLanguageModeling,
     Trainer, TrainingArguments, EarlyStoppingCallback, TrainerCallback,
@@ -18,6 +21,40 @@ from tokenizers import Tokenizer as RawTokenizer
 from tokenizers.models import WordPiece as WordPieceModel
 from tokenizers.trainers import WordPieceTrainer
 from tokenizers.pre_tokenizers import Whitespace
+
+# Vision branch (--use_image): only period/genre/provenience get a picture
+# (language has no plausible visual signal -- session discussion,
+# 2026-08-06). Follows Aeneas's own mechanism (Assael et al. 2025, Methods
+# p.148): a CNN feature vector is concatenated with the text embedding
+# before the head. Unlike this project's earlier frozen-backbone pilot
+# script (train_mbert_vision.py), this is the real joint end-to-end
+# training Aeneas actually did -- "batch size of 1,024 text-image pairs"
+# (p.9) means every example carried an image slot in a single training run
+# over the whole corpus, not a separate post-hoc stage over only the
+# image-bearing subset. Tablets without a collected photo (the overwhelming
+# majority of the corpus) get an all-zero placeholder image so batch
+# tensors stay uniformly shaped -- no explicit missing-modality flag is
+# needed, the head just learns a near-constant image contribution for
+# those rows since the input carries no information.
+IMAGE_HEADS = ("period", "genre", "provenience")
+IMG_SIZE = 224  # ResNet18's input size, matches Aeneas's own (Methods p.148) and finalize_vision_crops.py's stored size
+# Per-class image counts (~150-300) are the same order of magnitude as
+# Aeneas's own average (~8,843 images / 62 provinces =~ 142/class), not
+# orders of magnitude smaller -- but a ResNet trained fully from scratch at
+# that scale still overfits easily without the augmentation Aeneas explicitly
+# used to fight it ("image augmentations such as zooming, rotation, and
+# adjustments to brightness and contrast", Methods p.148). No horizontal
+# flip: unlike a generic object photo, a mirrored tablet face has reversed
+# sign order/orientation, which is not a valid input for this task. Eval
+# stays deterministic (no augmentation) so checkpoint comparisons aren't
+# noisy -- see TiedWeightSafeTrainer's eval_data_collator override below.
+IMG_TRANSFORM_TRAIN = tv_transforms.Compose([
+    tv_transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    tv_transforms.RandomRotation(10),
+    tv_transforms.ColorJitter(brightness=0.2, contrast=0.2),
+    tv_transforms.ToTensor(),
+])
+IMG_TRANSFORM_EVAL = tv_transforms.Compose([tv_transforms.Resize((IMG_SIZE, IMG_SIZE)), tv_transforms.ToTensor()])
 
 # The two real-damage signals that survive into the 'text' column (see
 # prepare_hf_dataset.py's clean_transliteration): a standalone 'x' is one
@@ -114,6 +151,25 @@ class TiedWeightSafeTrainer(Trainer):
         state_dict = {k: v.clone() for k, v in state_dict.items()}
         super()._save(output_dir, state_dict=state_dict)
 
+    # --use_image trains with augmented crops (see IMG_TRANSFORM_TRAIN) but
+    # eval should stay deterministic so checkpoint comparisons (early
+    # stopping, with-vs-without-image deltas) aren't noisy from random
+    # rotation/color jitter. HF's Trainer only takes one data_collator
+    # constructor arg, so swap it in for the duration of eval only.
+    def __init__(self, *args, eval_data_collator=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.eval_data_collator = eval_data_collator
+
+    def get_eval_dataloader(self, eval_dataset=None):
+        if self.eval_data_collator is None:
+            return super().get_eval_dataloader(eval_dataset)
+        original = self.data_collator
+        self.data_collator = self.eval_data_collator
+        try:
+            return super().get_eval_dataloader(eval_dataset)
+        finally:
+            self.data_collator = original
+
 class LogToFileCallback(TrainerCallback):
     # report_to="none" leaves Trainer's default PrinterCallback printing
     # step/eval metrics straight to stdout (bypasses the `logging` module),
@@ -132,27 +188,54 @@ class LogToFileCallback(TrainerCallback):
 # the two runs are comparable apart from the backbone itself.
 
 class MBertMultiTask(nn.Module):
-    def __init__(self, model_name, num_period, num_genre, num_language, num_provenience, meta_weight=1.0):
+    def __init__(self, model_name, num_period, num_genre, num_language, num_provenience, meta_weight=1.0,
+                 use_image=False, vision_init="scratch", img_feat_dim=128):
         super().__init__()
         self.backbone = AutoModelForMaskedLM.from_pretrained(model_name)
         hidden_size = self.backbone.config.hidden_size
-        self.period_head = nn.Linear(hidden_size, num_period)
-        self.genre_head = nn.Linear(hidden_size, num_genre)
-        self.language_head = nn.Linear(hidden_size, num_language)
-        self.provenience_head = nn.Linear(hidden_size, num_provenience)
+        self.use_image = use_image
         self.meta_weight = meta_weight
 
-    def forward(self, input_ids, attention_mask=None, labels=None,
+        head_in = hidden_size + img_feat_dim if use_image else hidden_size
+        self.period_head = nn.Linear(head_in, num_period)
+        self.genre_head = nn.Linear(head_in, num_genre)
+        self.language_head = nn.Linear(hidden_size, num_language)  # never sees the image
+        self.provenience_head = nn.Linear(head_in, num_provenience)
+
+        if use_image:
+            # scratch (default): random init, fully trainable -- matches
+            # Aeneas's own from-scratch ResNet-8 (ref. 82 there is just the
+            # general He et al. residual-block paper, not a checkpoint);
+            # our image count is the same order of magnitude as theirs
+            # (~5.3k vs ~8.8k = 5% of their 176,861-inscription corpus).
+            # pretrained: frozen ImageNet ResNet18, only vision_proj trains
+            # -- kept as an A/B option, not the default (domain gap between
+            # ImageNet photos and tablet macro shots makes transfer uncertain).
+            weights = tv_models.ResNet18_Weights.IMAGENET1K_V1 if vision_init == "pretrained" else None
+            resnet = tv_models.resnet18(weights=weights)
+            if vision_init == "pretrained":
+                for p in resnet.parameters():
+                    p.requires_grad = False
+            resnet.fc = nn.Identity()
+            self.vision_cnn = resnet
+            self.vision_proj = nn.Linear(512, img_feat_dim)
+
+    def forward(self, input_ids, attention_mask=None, pixel_values=None, labels=None,
                 period_labels=None, genre_labels=None, language_labels=None, provenience_labels=None):
         bert_out = self.backbone.bert(input_ids=input_ids, attention_mask=attention_mask)
         seq = bert_out.last_hidden_state
         mlm_logits = self.backbone.cls(seq)
 
         cls_embed = seq[:, 0, :]
-        period_logits = self.period_head(cls_embed)
-        genre_logits = self.genre_head(cls_embed)
+        if self.use_image:
+            img_feat = self.vision_proj(self.vision_cnn(pixel_values))
+            head_in = torch.cat([cls_embed, img_feat], dim=-1)
+        else:
+            head_in = cls_embed
+        period_logits = self.period_head(head_in)
+        genre_logits = self.genre_head(head_in)
         language_logits = self.language_head(cls_embed)
-        provenience_logits = self.provenience_head(cls_embed)
+        provenience_logits = self.provenience_head(head_in)
 
         loss = None
         if any(l is not None for l in [labels, period_labels, genre_labels, language_labels, provenience_labels]):
@@ -183,6 +266,59 @@ class MBertMultiTask(nn.Module):
             "provenience_logits": provenience_logits,
         }
 
+def build_tablet_image_index(crops_dir, reviewed_only=True):
+    """tablet_id (CDLI "P######" form, matching prepare_hf_dataset.py's
+    to_examples()) -> crop image path. Only used when --use_image; ids
+    outside this index (the overwhelming majority of the corpus -- images
+    exist for a small collected subset, not every tablet) fall back to an
+    all-zero placeholder in the collator, same as Aeneas's own training
+    (every example carries an image slot, real or not)."""
+    manifest_path = os.path.join(crops_dir, "crops_manifest.jsonl")
+    index = {}
+    if not os.path.exists(manifest_path):
+        return index
+    with open(manifest_path, encoding="utf-8") as f:
+        for line in f:
+            try:
+                row = json.loads(line)
+            except Exception:
+                continue
+            if reviewed_only and not row.get("reviewed"):
+                continue
+            raw_id = str(row["id"]).strip()
+            tablet_id = "P" + raw_id.zfill(6) if raw_id.isdigit() else raw_id
+            path = os.path.join(crops_dir, f"{row['id']}.jpg")
+            if os.path.exists(path):
+                index[tablet_id] = path
+    return index
+
+def mark_one_line_per_tablet(dataset):
+    """Adds an "image_tablet_id" column: equal to "tablet_id" for exactly
+    one (the first-encountered) line of each tablet, "" for every other
+    line of that same tablet. TRAIN-only fix for a real skew (session
+    finding, 2026-08-06): without this, a tablet's photo is shown to the
+    model once per LINE it has (this corpus: up to 407, avg 13, median 8),
+    and that count varies systematically by class -- e.g. provenience
+    Assur averages 23 lines/tablet vs Puzriš-Dagan's 4.3, a ~5x difference
+    in effective image-training frequency despite deliberately balanced
+    per-class *tablet* counts. Capping it to one real showing per tablet
+    per epoch removes that skew entirely without touching line-level MLM
+    (Aeneas's own province-only image head, and the earlier
+    train_mbert_vision.py pilot, don't have this problem because they
+    don't operate at line granularity in the first place)."""
+    # Plain sequential pass (not .map(num_proc>1)) -- "first encountered"
+    # must follow actual row order, which parallel/batched execution
+    # wouldn't guarantee.
+    seen = set()
+    marked = []
+    for tid in dataset["tablet_id"]:
+        if not tid or tid in seen:
+            marked.append("")
+        else:
+            seen.add(tid)
+            marked.append(tid)
+    return dataset.add_column("image_tablet_id", marked)
+
 class MBertCollator:
     """Standard 15% MLM masking (HF's own collator) plus the 4 metadata labels
     carried through -- unlike AkkadianModel's physical-damage collator, mBERT
@@ -191,14 +327,43 @@ class MBertCollator:
     from masking targets via get_special_tokens_mask(), so registering
     UNCLEAR_SIGN_TOKEN/UNKNOWN_GAP_TOKEN as special tokens (see train(),
     mark_damage_signals()) is enough to keep them out of the mask targets
-    here too -- no extra exclusion logic needed in this collator."""
-    def __init__(self, tokenizer, mlm_probability=0.15):
+    here too -- no extra exclusion logic needed in this collator.
+
+    image_index (tablet_id -> crop path) is None when --use_image is off,
+    in which case no pixel_values key is produced at all -- MBertMultiTask
+    with use_image=False never looks for one. img_transform selects
+    train (augmented) vs eval (deterministic) processing -- see
+    IMG_TRANSFORM_TRAIN/IMG_TRANSFORM_EVAL and TiedWeightSafeTrainer's
+    eval_data_collator swap."""
+    def __init__(self, tokenizer, mlm_probability=0.15, image_index=None, img_transform=IMG_TRANSFORM_EVAL):
         self.mlm_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=True, mlm_probability=mlm_probability)
+        self.image_index = image_index
+        self.img_transform = img_transform
+        self._zero_image = torch.zeros(3, IMG_SIZE, IMG_SIZE)
+
+    def _load_image(self, tablet_id):
+        path = self.image_index.get(tablet_id) if tablet_id else None
+        if path is None:
+            return self._zero_image
+        try:
+            return self.img_transform(Image.open(path).convert("RGB"))
+        except Exception:
+            return self._zero_image
 
     def __call__(self, examples):
         batch = self.mlm_collator([{"input_ids": ex["input_ids"], "attention_mask": ex["attention_mask"]} for ex in examples])
         for task in ["period", "genre", "language", "provenience"]:
             batch[f"{task}_labels"] = torch.tensor([ex[f"{task}_labels"] for ex in examples], dtype=torch.long)
+        if self.image_index is not None:
+            # "image_tablet_id" (see mark_one_line_per_tablet) is blank for
+            # every line of a tablet except one, on the TRAIN split only --
+            # falls back to plain "tablet_id" if that column wasn't added
+            # (eval collator: every line of an image-bearing tablet gets its
+            # real photo, since eval isn't fighting a training-time bias).
+            batch["pixel_values"] = torch.stack([
+                self._load_image(ex["image_tablet_id"] if "image_tablet_id" in ex else ex.get("tablet_id"))
+                for ex in examples
+            ])
         return batch
 
 def make_preprocess_logits_for_metrics(banned_ids):
@@ -301,6 +466,10 @@ def train():
     parser.add_argument("--max_length", type=int, default=96)
     parser.add_argument("--precision", type=str, choices=["fp32", "fp16", "bf16"], default="fp16", help="Mixed precision mode -- fp16 for T4/Colab, bf16 for Ampere+ (A100/newer)")
     parser.add_argument("--resume_from_checkpoint", type=str, default=None, help="Path to a specific checkpoint, or 'auto' to resume from the latest one in --save_dir")
+    parser.add_argument("--use_image", action="store_true", help="Add the vision branch to period/genre/provenience (Aeneas-style concat) -- off by default, identical behavior to before this flag existed")
+    parser.add_argument("--vision_init", type=str, choices=["scratch", "pretrained"], default="scratch", help="scratch: random-init ResNet18, fully trainable (matches Aeneas's own from-scratch ResNet-8). pretrained: frozen ImageNet ResNet18, A/B option")
+    parser.add_argument("--crops_dir", type=str, default=r"C:\Programming\akkadian\data\vision_dataset_final", help="Dir with <tablet id>.jpg crops + crops_manifest.jsonl (see finalize_vision_crops.py)")
+    parser.add_argument("--include_unreviewed", action="store_true", help="Also use tablets whose bbox was never manually reviewed (raw CuneiML bbox, ~58%% reliable) -- off by default")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -354,7 +523,21 @@ def train():
     val_dataset = hf_ds["validation"]
     logger.info(f"Loaded {len(train_dataset)} training samples.")
 
-    collator = MBertCollator(tokenizer)
+    image_index = None
+    if args.use_image:
+        image_index = build_tablet_image_index(args.crops_dir, reviewed_only=not args.include_unreviewed)
+        logger.info(f"Vision branch on ({args.vision_init}): {len(image_index)} tablets have a real photo "
+                    f"({'including' if args.include_unreviewed else 'excluding'} unreviewed bboxes); "
+                    f"everything else gets an all-zero placeholder image")
+        # TRAIN only: cap each tablet to one real image showing per epoch
+        # (see mark_one_line_per_tablet) -- eval keeps every line's real
+        # image, since eval isn't fighting a training-time frequency bias.
+        train_dataset = mark_one_line_per_tablet(train_dataset)
+        n_marked = sum(1 for t in train_dataset["image_tablet_id"] if t)
+        logger.info(f"mark_one_line_per_tablet: {n_marked} lines (of {len(train_dataset)}) keep their real "
+                    f"image slot for training, one per tablet")
+    collator = MBertCollator(tokenizer, image_index=image_index, img_transform=IMG_TRANSFORM_TRAIN)
+    eval_collator = MBertCollator(tokenizer, image_index=image_index, img_transform=IMG_TRANSFORM_EVAL) if args.use_image else None
 
     if args.label_config:
         label_config_path = args.label_config
@@ -373,7 +556,7 @@ def train():
     model = MBertMultiTask(
         args.model_name, num_period=num_labels["period"], num_genre=num_labels["genre"],
         num_language=num_labels["language"], num_provenience=num_labels["provenience"],
-        meta_weight=args.meta_weight,
+        meta_weight=args.meta_weight, use_image=args.use_image, vision_init=args.vision_init,
     )
 
     # TrainingArguments(logging_dir=...) is deprecated in favor of this env
@@ -413,6 +596,7 @@ def train():
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         data_collator=collator,
+        eval_data_collator=eval_collator,
         compute_metrics=compute_metrics,
         preprocess_logits_for_metrics=make_preprocess_logits_for_metrics(tokenizer.all_special_ids),
         callbacks=[EarlyStoppingCallback(early_stopping_patience=args.early_stopping_patience), LogToFileCallback()],

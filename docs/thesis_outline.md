@@ -173,6 +173,10 @@ This is the first track actually trained (ahead of the transliteration track), s
 - Label smoothing rates (0.05 for the MLM/restoration objective, 0.1 for classification heads) numerically match Aeneas's own reported values exactly ("smoothing rates of 5% for the restoration task and 10% for geographical attribution") — an independent convergence worth noting, not a copied hyperparameter.
   — Assael et al. 2025, Methods, p.148.
 
+- This session's own loss-weight revision (`meta_weight`: 0.25 → 1.0, i.e. MLM:metadata from 12:1 to 3:1) was motivated directly by contrasting the original ratio against Aeneas's own fixed weighting (≈3:2, restoration:region) — the metadata heads were judged structurally underweighted relative to this precedent, not merely slow to converge. A step-matched comparison against the `meta_weight=0.25` run (step 2000, identical schedule otherwise) shows metadata macro-F1 gains of +6–21% (provenience +21%, period +18%, language +16%, genre +6%) at an MLM cost of only −1–2% (MRR 0.727→0.718, Hit@5 0.810→0.801) — evidence the original weighting was leaving metadata performance on the table rather than reflecting a genuine task-difficulty ceiling.
+  — Assael et al. 2025, Methods, p.148 (`L = 3·L_restoration + L_unknown + 2·L_region + 1.25·L_date`).
+  — This work: `src/training/train_mbert.py` (`--meta_weight` CLI arg, commit 9e47fa6); step-2000 comparison, `checkpoints_mbert_amd*/checkpoint-2000/trainer_state.json`, 2026-08-05. **Final full-validation-set result (n=31,921) confirms the trend held to completion**: genre macro-F1 0.747→0.776 (+3.9%), language 0.634→0.701 (+10.5%), period 0.645→0.695 (+7.7%), provenience 0.557→0.609 (+9.3%), against an MLM cost of under 1% on every restoration metric (MRR 0.784→0.777, Hit@5 0.862→0.855, Hit@3 0.826→0.818, top-1 0.719→0.711) — `evaluation_report_mbert.json` (meta_weight=0.25) vs. `evaluation_report_mbert_metaw1.json` (meta_weight=1.0), both via `src/analysis/evaluate_mbert.py`.
+
 ---
 
 ## 5. Evaluation
@@ -195,9 +199,25 @@ This is the first track actually trained (ahead of the transliteration track), s
 - Constrained decoding is also applied at the level of *content validity*: this project bans non-content tokens (PAD/UNK/CLS/SEP/MASK plus the real-damage markers) from ever being a model's predicted answer, not just from being a masking target — matching Eremeev's stated rationale and going slightly further than either Lazar or Aeneas make explicit in their published metrics sections.
   — This work: `src/training/train.py` (`non_content_ids`), `src/analysis/evaluate.py`, `src/analysis/inference.py`.
 
-### 5.2–5.6 (Model-specific results, HP-tuning, experiment log)
+### 5.2 mBERT (Transliteration) Track — Results
 
-*Fill in once training runs complete — no trained checkpoints exist yet as of this outline.*
+- First full run (`meta_weight=0.25`, 20 epochs, best checkpoint selected by `eval_loss` under `load_best_model_at_end` — turned out to be the very last step, 11180/11180, i.e. `eval_loss` never stopped improving): MLM MRR 0.784, Hit@5 0.862, Hit@3 0.826, top-1 0.719 on the full validation split (n=31,921) — 94.5% and 96.9% of Lazar et al. 2021's reported overall MRR (.83) and Hit@5 (.89) respectively, despite not matching their training scale (8×Tesla M60, 20 epochs) or reusing their (unpublished) injected-token list — this project relearns its own WordPiece injection vocabulary from the corpus (§4.1).
+  — Lazar et al. 2021, Table 2, p.4686 (comparison numbers).
+  — This work: `src/analysis/evaluate_mbert.py`, `checkpoints_mbert_amd/final_model`, run 2026-08-05.
+
+- Metadata heads on the same checkpoint: genre macro-F1 0.747, period 0.645, language 0.634 (accuracy 0.938 — much higher than macro-F1, driven by severe within-head class imbalance: 2 of 4 language classes carry ~97% of labeled examples), provenience 0.557 (weakest head — most classes (12) and largest missing-label fraction (~26%) of all four heads).
+  — This work: `evaluation_report_mbert.json`; label-distribution audit against `AlexSychovUN/Iskander-Dataset` train split, this session.
+
+- No train/eval divergence (the standard overfitting signature) observed at any point: train-step loss and `eval_loss` track within ~0.05–0.1 of each other through the final ~2,700 steps.
+  — This work: `checkpoints_mbert_amd/checkpoint-11180/trainer_state.json` (`log_history`).
+
+- Design choice, not yet resolved as better or worse: following Aeneas (§3.5), this project uses plain cross-entropy + label smoothing for all four metadata heads rather than per-class (inverse-frequency) weighting, even though Aeneas's own province classes are far more imbalanced than this project's worst case (language) — Aeneas explicitly accepts weaker performance on data-poor classes as a reported limitation rather than a defect to correct via reweighting.
+  — Assael et al. 2025, *Nature* 645, p.146 ("performance often tends to be weaker where data is limited"); Extended Data Figs. 3–4.
+  — This work: session discussion, 2026-08-05.
+
+### 5.3–5.6 (HP-tuning, sign-level track results, experiment log)
+
+*Fill in once the sign-level track and the `meta_weight=1.0` mBERT re-run complete.*
 
 ---
 
@@ -206,9 +226,16 @@ This is the first track actually trained (ahead of the transliteration track), s
 - **Data circularity**: training on text that includes editors' own bracketed conjectural restorations risks confirmation bias, but excluding it loses a large fraction of usable data. Aeneas quantifies this directly (excluding conjectures cost 20% of usable I.PHI text; models trained with vs. without conjectures differed by <5% in all tasks) and elects to keep conjectures in, citing data scarcity as the deciding factor — directly relevant precedent for whether/how to treat ORACC's own bracketed restorations.
   — Assael et al. 2025, Methods, "The question of data circularity", p.147.
 
-- **Multimodal (image-conditioned) head — planned future work.** Aeneas's own design is the direct precedent: only the geographical-attribution head receives visual input; restoration explicitly excludes it to prevent information leakage (since masked positions' image regions are not itself masked); the dating head excludes it because ablations showed no measurable gain. This motivates attaching a future image head to this project's provenience classification specifically, not to the restoration objective, and pairing it with the signs (glyph) track rather than the transliteration track, since CuneiML's images correspond physically to the glyphs, not the romanized reading.
+- **Multimodal (image-conditioned) head — planned future work.** Aeneas's own design is the direct precedent: only the geographical-attribution head receives visual input; restoration explicitly excludes it to prevent information leakage (since masked positions' image regions are not itself masked); the dating head excludes it because ablations showed no measurable gain. By analogy, this project's future image head is planned for provenience classification specifically, not for the restoration objective or (per this same evidence) chronological (period) attribution.
   — Assael et al. 2025, *Nature* 645, p.142 ("It should be noted that only the geographical attribution head incorporates the additional inputs from the vision network — the restoration and chronological attribution tasks do not use the visual modality... The visual input was excluded for the restoration task to prevent unintended information 'leakage'... The visual modality was also omitted for the dating task because experiments showed no significant performance gains.").
   — This work: session discussion on image-head sequencing.
+
+- **Revised track pairing — divergence from the original plan, to be justified explicitly in the write-up.** The reasoning above originally paired a future image head with the sign-level (glyph) track, since CuneiML images correspond physically to glyphs rather than to the romanized transliteration. This session's results (mBERT/transliteration substantially ahead of the from-scratch sign-level track on restoration quality at comparable training cost, §5.2) make the mBERT track the more likely candidate to extend with a provenience-focused vision head first — even though the transliteration is one step further removed from the image than the glyphs are. This is a real tension with the "physical correspondence" argument above and should be addressed head-on in the final text (e.g. images condition on the *tablet*, not on either text representation specifically, so the correspondence argument bears less weight than it first appears to), not silently resolved by switching tracks.
+  — This work: session comparison of sign-level vs. mBERT-track metrics, 2026-08-05 (exact sign-level figures pending final checkpoint).
+
+- **Image bounding-box quality is inconsistent and needs filtering before use — root cause identified and sourced.** CuneiML's bounding boxes are not manually annotated: they are produced by reconciling three automated CV segmentation methods (connected-component segmentation, watershed, SegmentAnything) by overlap area, validated by the dataset authors on only 100 randomly sampled images (97% self-reported pass rate) — i.e. imperfect segmentation is an acknowledged, expected property of the source data, not a defect introduced by this project's pipeline. This project's own image URL construction (`https://cdli.mpiwg-berlin.mpg.de/dl/photo/P{id}.jpg`) exactly matches CuneiML's documented crawl source, ruling out an id/image mismatch on this project's side. A manual visual audit of 24 randomly sampled entries (full-resolution composite 6-face tablet photos, correctly scaled) found only ~58% (14/24) of boxes correctly isolate the inscribed face; failures plausibly stem from the segmentation locking onto another high-contrast rectangular object in frame (e.g. a museum collection card or scale bar) rather than the tablet face itself. This project's ~42% failure rate on its own sample is notably higher than CuneiML's self-reported ~3%, a discrepancy worth noting explicitly rather than silently using the friendlier published figure. A minimum bbox-area-fraction filter (or equivalent validation) is needed before training any vision head on CuneiML crops as-is.
+  — Chen et al. 2023 (CuneiML), §3.3 "Cutting Out the Major Faces", p.5 ("we reconcile differences between the bounding boxes each system produces by computing the area of their overlap... We sampled 100 images randomly to validate the cutouts; 97% met our quality requirements."); §3.1, p.4 (crawl URL pattern, footnote 2).
+  — This work: session visual audit (24-sample contact sheet) and 1,000-sample manual-review export (`src/data_pipeline/export_bbox_review.py`, `data/bbox_review/`), 2026-08-05.
 
 ---
 
