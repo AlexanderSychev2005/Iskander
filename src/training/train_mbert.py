@@ -204,15 +204,29 @@ class MBertMultiTask(nn.Module):
         self.provenience_head = nn.Linear(head_in, num_provenience)
 
         if use_image:
-            # scratch (default): random init, fully trainable -- matches
-            # Aeneas's own from-scratch ResNet-8 (ref. 82 there is just the
-            # general He et al. residual-block paper, not a checkpoint);
-            # our image count is the same order of magnitude as theirs
-            # (~5.3k vs ~8.8k = 5% of their 176,861-inscription corpus).
-            # pretrained: frozen ImageNet ResNet18, only vision_proj trains
-            # -- kept as an A/B option, not the default (domain gap between
-            # ImageNet photos and tablet macro shots makes transfer uncertain).
-            weights = tv_models.ResNet18_Weights.IMAGENET1K_V1 if vision_init == "pretrained" else None
+            # scratch: random init, fully trainable -- matches Aeneas's own
+            # from-scratch ResNet-8 (ref. 82 there is just the general He et
+            # al. residual-block paper, not a checkpoint); our image count is
+            # the same order of magnitude as theirs (~5.3k vs ~8.8k = 5% of
+            # their 176,861-inscription corpus). Session results (2026-08-06,
+            # document-granularity run): got progressively *worse* relative
+            # to the text-only baseline past step ~2000 -- plausibly just not
+            # enough data/steps for an 11M-param CNN to learn useful filters
+            # from random noise in this budget.
+            # pretrained: frozen ImageNet ResNet18, only vision_proj trains --
+            # a linear probe on fixed general-purpose (edge/texture/color)
+            # features. Same session: small, consistent, believable gains
+            # over text-only through step 1500 (period/genre/provenience all
+            # up a little, the image-blind language head flat) -- unlike
+            # scratch's reversal.
+            # finetune: same ImageNet init as pretrained, but NOT frozen --
+            # lets the CNN adapt its features to tablet photos specifically,
+            # rather than staying fixed at whatever ImageNet needed. The
+            # actual "fine-tune" in the everyday sense of the word; requested
+            # after seeing frozen "pretrained" outperform "scratch" -- worth
+            # checking whether unfreezing captures pretrained's stability
+            # *and* scratch's intended adaptability.
+            weights = tv_models.ResNet18_Weights.IMAGENET1K_V1 if vision_init in ("pretrained", "finetune") else None
             resnet = tv_models.resnet18(weights=weights)
             if vision_init == "pretrained":
                 for p in resnet.parameters():
@@ -533,7 +547,7 @@ def train():
     parser.add_argument("--precision", type=str, choices=["fp32", "fp16", "bf16"], default="fp16", help="Mixed precision mode -- fp16 for T4/Colab, bf16 for Ampere+ (A100/newer)")
     parser.add_argument("--resume_from_checkpoint", type=str, default=None, help="Path to a specific checkpoint, or 'auto' to resume from the latest one in --save_dir")
     parser.add_argument("--use_image", action="store_true", help="Add the vision branch to period/genre/provenience (Aeneas-style concat) -- off by default, identical behavior to before this flag existed")
-    parser.add_argument("--vision_init", type=str, choices=["scratch", "pretrained"], default="scratch", help="scratch: random-init ResNet18, fully trainable (matches Aeneas's own from-scratch ResNet-8). pretrained: frozen ImageNet ResNet18, A/B option")
+    parser.add_argument("--vision_init", type=str, choices=["scratch", "pretrained", "finetune"], default="scratch", help="scratch: random-init ResNet18, fully trainable. pretrained: frozen ImageNet ResNet18 (linear probe). finetune: ImageNet-init ResNet18, NOT frozen -- adapts pretrained features to tablet photos")
     parser.add_argument("--crops_dir", type=str, default=r"C:\Programming\akkadian\data\vision_dataset_final", help="Dir with <tablet id>.jpg crops + crops_manifest.jsonl (see finalize_vision_crops.py); ignored if --images_from_hf")
     parser.add_argument("--include_unreviewed", action="store_true", help="Also use tablets whose bbox was never manually reviewed (raw CuneiML bbox, ~58%% reliable) -- off by default, and not meaningful with --images_from_hf (the published vision config is reviewed-only already)")
     parser.add_argument("--images_from_hf", action="store_true", help="Load the vision config straight from --data_dir's HF repo instead of a local --crops_dir -- no scp'ing image folders to a training box")

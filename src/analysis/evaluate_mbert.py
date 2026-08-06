@@ -56,7 +56,7 @@ if __name__ == "__main__":
     parser.add_argument("--context_char_min", type=int, default=32)
     parser.add_argument("--context_char_max", type=int, default=None, help="Match whatever the checkpoint was trained with (e.g. 850 for a --hf_config documents run)")
     parser.add_argument("--use_image", action="store_true", help="Must match how the checkpoint was trained")
-    parser.add_argument("--vision_init", type=str, choices=["scratch", "pretrained"], default="scratch")
+    parser.add_argument("--vision_init", type=str, choices=["scratch", "pretrained", "finetune"], default="scratch")
     parser.add_argument("--images_from_hf", action="store_true")
     parser.add_argument("--crops_dir", type=str, default=r"C:\Programming\akkadian\data\vision_dataset_final")
     parser.add_argument("--include_unreviewed", action="store_true")
