@@ -124,6 +124,10 @@ if __name__ == "__main__":
         per_device_eval_batch_size=args.batch_size,
         report_to=[],
         label_names=["labels", "period_labels", "genre_labels", "language_labels", "provenience_labels"],
+        # See train_mbert.py's train() -- Trainer's default column-pruning
+        # strips "text"/"tablet_id" before the collator can use them for
+        # on-the-fly windowing/image lookup.
+        remove_unused_columns=False,
     )
     trainer = Trainer(
         model=model,

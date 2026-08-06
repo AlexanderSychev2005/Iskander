@@ -676,6 +676,15 @@ def train():
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
+        # Trainer's default (True) strips any dataset column not in
+        # MBertMultiTask.forward()'s signature before the collator ever
+        # sees a batch -- breaks both --context_char_max (collator
+        # tokenizes from "text" itself) and --use_image (collator looks up
+        # "tablet_id"/"image_tablet_id"), neither of which is a forward()
+        # parameter. Caught this only via a real Trainer run on the AMD
+        # box; direct collator() calls in local smoke tests never
+        # exercised Trainer's own column-pruning at all.
+        remove_unused_columns=False,
     )
 
     trainer = TiedWeightSafeTrainer(
