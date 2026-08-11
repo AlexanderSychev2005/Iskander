@@ -23,11 +23,18 @@ from tokenizers.models import WordPiece as WordPieceModel
 from tokenizers.trainers import WordPieceTrainer
 from tokenizers.pre_tokenizers import Whitespace
 
-# Vision branch (--use_image): only period/genre/provenience get a picture
-# (language has no plausible visual signal -- session discussion,
+# Vision branch (--use_image): only provenience gets a picture. period and
+# genre used to get one too, but the controlled 4-way ablation (session
+# 2026-08-11) showed no reproducible benefit on either -- period was a wash
+# (matching Aeneas's own negative finding for their dating head almost
+# exactly) and genre's apparent gain flipped sign between scratch/finetune,
+# i.e. noise. provenience is the only head with a reproducible, above-noise-
+# floor effect (Ur/Nippur, confirmed in two independent vision_init runs).
+# language never got one (no plausible visual signal -- session discussion,
 # 2026-08-06). Follows Aeneas's own mechanism (Assael et al. 2025, Methods
 # p.148): a CNN feature vector is concatenated with the text embedding
-# before the head. Unlike this project's earlier frozen-backbone pilot
+# before the head -- restricted, as in Aeneas, to the one task where images
+# actually carry signal. Unlike this project's earlier frozen-backbone pilot
 # script (train_mbert_vision.py), this is the real joint end-to-end
 # training Aeneas actually did -- "batch size of 1,024 text-image pairs"
 # (p.9) means every example carried an image slot in a single training run
@@ -197,11 +204,11 @@ class MBertMultiTask(nn.Module):
         self.use_image = use_image
         self.meta_weight = meta_weight
 
-        head_in = hidden_size + img_feat_dim if use_image else hidden_size
-        self.period_head = nn.Linear(head_in, num_period)
-        self.genre_head = nn.Linear(head_in, num_genre)
+        vision_head_in = hidden_size + img_feat_dim if use_image else hidden_size
+        self.period_head = nn.Linear(hidden_size, num_period)  # no image -- see note above
+        self.genre_head = nn.Linear(hidden_size, num_genre)  # no image -- see note above
         self.language_head = nn.Linear(hidden_size, num_language)  # never sees the image
-        self.provenience_head = nn.Linear(head_in, num_provenience)
+        self.provenience_head = nn.Linear(vision_head_in, num_provenience)
 
         if use_image:
             # scratch: random init, fully trainable -- matches Aeneas's own
@@ -247,8 +254,8 @@ class MBertMultiTask(nn.Module):
             head_in = torch.cat([cls_embed, img_feat], dim=-1)
         else:
             head_in = cls_embed
-        period_logits = self.period_head(head_in)
-        genre_logits = self.genre_head(head_in)
+        period_logits = self.period_head(cls_embed)
+        genre_logits = self.genre_head(cls_embed)
         language_logits = self.language_head(cls_embed)
         provenience_logits = self.provenience_head(head_in)
 

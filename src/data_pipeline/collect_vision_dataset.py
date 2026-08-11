@@ -109,12 +109,17 @@ def map_period(p):
 
 
 # Classes below cleared the >=50-example floor under the relaxed (single-
-# field) filter, per the session's counting pass (2026-08-05). Ugarit/
-# Nimrud/Uruk (provenience), Neo-Babylonian/Late Antiquity (period) excluded.
+# field) filter, per the session's counting pass (2026-08-05). Ugarit (0
+# candidates) / Nimrud (2) excluded for real -- not enough source photos
+# exist in CuneiML+cdli_cat regardless of collection effort. Uruk was also
+# excluded by that pass but a recount (session 2026-08-11, using the same
+# load_all_candidates() the script itself runs) found 68 real candidates --
+# above the floor. That original count was stale/wrong; Uruk is back in.
+# Neo-Babylonian/Late Antiquity (period) still excluded, uses images anyway.
 HEADS = {
     "provenience": {
         "field": "provenience", "mapper": map_provenience,
-        "classes": ["Umma", "Puzriš-Dagan", "Girsu", "Nippur", "Kanesh", "Ur", "Nineveh", "Sippar", "Assur"],
+        "classes": ["Umma", "Puzriš-Dagan", "Girsu", "Nippur", "Kanesh", "Ur", "Nineveh", "Sippar", "Assur", "Uruk"],
     },
     "genre": {
         "field": "genre", "mapper": map_genre,
