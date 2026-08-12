@@ -27,6 +27,7 @@ splits train/validation/test)
   didn't map to a known class -- see prepare_hf_dataset.py's map_* functions).
 """
 import csv
+import json
 import os
 import sys
 
@@ -35,6 +36,7 @@ from datasets import Dataset, DatasetDict, Features, Image, Value, load_from_dis
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from src.data_pipeline.collect_vision_dataset import load_all_candidates
 from src.data_pipeline.prepare_hf_dataset import map_genre, map_language, map_period, map_provenience
+from src.data_pipeline.prepare_cdli_bulk import split_for as cdli_bulk_split_for
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 CROPS_DIR = os.path.join(BASE_DIR, "data", "vision_dataset_final")
@@ -55,9 +57,31 @@ def tablet_split_map():
     return mapping
 
 
+def bulk_backfill_meta():
+    """tablet_id -> {period, genre, provenience, language} for tablets added
+    by prepare_cdli_bulk.py / the eBL backfill (session 2026-08-12). These
+    aren't in CuneiML's JSON (that's WHY they needed a separate source), so
+    load_all_candidates() below can't supply their metadata -- read it back
+    from the same interim files add_cdli_bulk_documents.py already resolved
+    it into. Also doubles as the id set for the split_for() fallback: only
+    these get it, unlike the ~221 pre-existing CuneiML-photo orphans with no
+    text anywhere, which should stay excluded."""
+    meta = {}
+    for fname in ("cdli_bulk_documents.jsonl", "ebl_bulk_documents.jsonl", "balance_documents.jsonl"):
+        path = os.path.join(BASE_DIR, "data", "interim", fname)
+        if not os.path.exists(path):
+            continue
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                r = json.loads(line)
+                meta[r["tablet_id"]] = r
+    return meta
+
+
 def main():
     candidates = load_all_candidates()
     split_of = tablet_split_map()
+    bulk_meta = bulk_backfill_meta()
 
     rows = {"train": [], "validation": [], "test": []}
     n_unmatched = 0
@@ -67,10 +91,17 @@ def main():
             img_path = os.path.join(CROPS_DIR, f"{pid}.jpg")
             if not os.path.exists(img_path):
                 continue
-            pair = candidates.get(pid)
-            meta = pair[1] if pair else {}
             tablet_id = "P" + pid.zfill(6) if pid.isdigit() else pid
+            if tablet_id in bulk_meta:
+                meta = bulk_meta[tablet_id]
+            else:
+                pair = candidates.get(pid)
+                meta = pair[1] if pair else {}
             split = split_of.get(tablet_id)
+            if split is None and tablet_id in bulk_meta:
+                # Same deterministic hash used in add_cdli_bulk_documents.py,
+                # so this always agrees with the documents config.
+                split = cdli_bulk_split_for(tablet_id)
             if split is None:
                 n_unmatched += 1
                 continue
