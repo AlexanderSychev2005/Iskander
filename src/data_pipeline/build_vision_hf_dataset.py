@@ -67,7 +67,8 @@ def bulk_backfill_meta():
     these get it, unlike the ~221 pre-existing CuneiML-photo orphans with no
     text anywhere, which should stay excluded."""
     meta = {}
-    for fname in ("cdli_bulk_documents.jsonl", "ebl_bulk_documents.jsonl", "balance_documents.jsonl"):
+    for fname in ("cdli_bulk_documents.jsonl", "ebl_bulk_documents.jsonl", "balance_documents.jsonl",
+                  "text_balance_documents.jsonl", "showcase_documents.jsonl"):
         path = os.path.join(BASE_DIR, "data", "interim", fname)
         if not os.path.exists(path):
             continue
@@ -99,9 +100,12 @@ def main():
                 meta = pair[1] if pair else {}
             split = split_of.get(tablet_id)
             if split is None and tablet_id in bulk_meta:
-                # Same deterministic hash used in add_cdli_bulk_documents.py,
-                # so this always agrees with the documents config.
-                split = cdli_bulk_split_for(tablet_id)
+                # Prefer the split already stored in the interim file (some,
+                # like showcase_documents.jsonl, force "test" regardless of
+                # the hash -- see add_showcase_texts.py). Fall back to
+                # recomputing the same deterministic hash only if a source
+                # file predates that field being written.
+                split = bulk_meta[tablet_id].get("split") or cdli_bulk_split_for(tablet_id)
             if split is None:
                 n_unmatched += 1
                 continue
