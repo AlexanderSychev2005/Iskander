@@ -43,6 +43,25 @@ CROPS_DIR = os.path.join(BASE_DIR, "data", "vision_dataset_final")
 BBOX_CSV = os.path.join(CROPS_DIR, "bboxes.csv")
 OUT_DIR = os.path.join(BASE_DIR, "data", "processed", "hf_dataset_vision")
 TEXT_DATASET_DIR = os.path.join(BASE_DIR, "data", "processed", "hf_dataset")
+CDLI_CAT_CSV = os.path.join(BASE_DIR, "data", "raw", "cdli_data", "cdli_cat.csv")
+
+
+def load_cdli_cat_meta():
+    """Fallback metadata source for tablets whose text was ALREADY in the
+    corpus (so they're in split_of) but whose photo was fetched directly
+    from CDLI rather than via CuneiML's own JSON export -- load_all_
+    candidates() only knows about CuneiML entries with an img_url, so those
+    tablets silently got meta={} -> provenience 'Unknown' (session
+    2026-08-12 bug: found via the Assur/Nimrud "text already exists, photo
+    was missing" backfill, where every single one of ~1200 photos lost its
+    real provenience this way -- CDLI's own catalogue always has it)."""
+    meta = {}
+    with open(CDLI_CAT_CSV, encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            idt = str(row.get("id_text", "")).strip()
+            if idt:
+                meta[idt] = row
+    return meta
 
 
 def tablet_split_map():
@@ -83,6 +102,7 @@ def main():
     candidates = load_all_candidates()
     split_of = tablet_split_map()
     bulk_meta = bulk_backfill_meta()
+    cdli_cat_meta = load_cdli_cat_meta()
 
     rows = {"train": [], "validation": [], "test": []}
     n_unmatched = 0
@@ -97,7 +117,7 @@ def main():
                 meta = bulk_meta[tablet_id]
             else:
                 pair = candidates.get(pid)
-                meta = pair[1] if pair else {}
+                meta = pair[1] if pair else cdli_cat_meta.get(pid, {})
             split = split_of.get(tablet_id)
             if split is None and tablet_id in bulk_meta:
                 # Prefer the split already stored in the interim file (some,
