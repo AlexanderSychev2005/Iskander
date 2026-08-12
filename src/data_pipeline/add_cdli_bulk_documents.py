@@ -24,6 +24,7 @@ IN_PATHS = [
     os.path.join(BASE_DIR, "data", "interim", "cdli_bulk_documents.jsonl"),
     os.path.join(BASE_DIR, "data", "interim", "ebl_bulk_documents.jsonl"),
     os.path.join(BASE_DIR, "data", "interim", "balance_documents.jsonl"),
+    os.path.join(BASE_DIR, "data", "interim", "text_balance_documents.jsonl"),
 ]
 DOCS_DIR = os.path.join(BASE_DIR, "data", "processed", "hf_dataset_documents")
 
