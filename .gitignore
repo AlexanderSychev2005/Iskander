@@ -24,3 +24,6 @@ training_output/
 *.bin
 
 papers/
+
+# Old runs, superseded checkpoints/analysis (session 2026-08-12 cleanup)
+archive/

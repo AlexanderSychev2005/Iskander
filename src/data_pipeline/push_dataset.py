@@ -4,55 +4,50 @@ from huggingface_hub import HfApi
 from datasets import load_from_disk
 from pathlib import Path
 
+# Local dir name for each pushed config -- documents/vision are the two
+# configs the current pipeline actually trains on (session 2026-08-12);
+# 'default' (line-level) stays as split-assignment infrastructure for
+# prepare_document_dataset.py/build_vision_hf_dataset.py but isn't itself a
+# training target anymore, so it's included here only if explicitly asked for.
+CONFIG_DIRS = {
+    "documents": "hf_dataset_documents_with_cdli_bulk",
+    "vision": "hf_dataset_vision",
+    "default": "hf_dataset",
+}
+
+
 def main():
     base_dir = Path(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))) / "data" / "processed"
 
-    parser = argparse.ArgumentParser(description="Push Iskander dataset and tokenizer to Hugging Face Hub")
+    parser = argparse.ArgumentParser(description="Push an Iskander dataset config to Hugging Face Hub")
     parser.add_argument("--repo_id", type=str, default="Iskander-Dataset", help="Repository name (will be prefixed with your username)")
+    parser.add_argument("--config_name", type=str, default="documents", choices=list(CONFIG_DIRS))
     args = parser.parse_args()
 
     api = HfApi()
     username = api.whoami()["name"]
     repo_id = f"{username}/{args.repo_id}"
 
-    print(f"--- Pushing Dataset to {repo_id} ---")
+    print(f"--- Pushing '{args.config_name}' config to {repo_id} ---")
     api.create_repo(repo_id, repo_type="dataset", exist_ok=True)
 
-    # 1. Push HF Dataset (Train & Validation)
-    print("Loading dataset...")
-    ds = load_from_disk(str(base_dir / "hf_dataset"))
-    print(f"Pushing dataset splits to {repo_id}...")
-    ds.push_to_hub(repo_id)
-    print("Dataset splits uploaded successfully!")
+    ds = load_from_disk(str(base_dir / CONFIG_DIRS[args.config_name]))
+    ds.push_to_hub(repo_id, config_name=args.config_name)
+    print(f"'{args.config_name}' config uploaded successfully!")
 
-    # 2. Upload vocab.json (signs) and vocab_translit.json (transliteration)
-    # -- two disjoint vocabularies for the two training tracks.
-    for fname in ["vocab.json", "vocab_translit.json"]:
-        vocab_path = base_dir / fname
-        if vocab_path.exists():
-            print(f"Uploading {vocab_path.name}...")
-            api.upload_file(
-                path_or_fileobj=str(vocab_path),
-                path_in_repo=f"tokenizer/{fname}",
-                repo_id=repo_id,
-                repo_type="dataset",
-                commit_message=f"Upload {fname}"
-            )
-
-    # 3. Upload label_configs.json
     label_path = base_dir / "label_configs.json"
     if label_path.exists():
-        print(f"Uploading {label_path.name}...")
         api.upload_file(
             path_or_fileobj=str(label_path),
             path_in_repo="configs/label_configs.json",
             repo_id=repo_id,
             repo_type="dataset",
-            commit_message="Upload label configs"
+            commit_message="Upload label configs",
         )
-        
-    print("\nSuccessfully pushed dataset, vocabulary, and configs to Hugging Face Hub!")
-    print(f"You can view your dataset here: https://huggingface.co/datasets/{repo_id}")
+        print("label_configs.json uploaded.")
+
+    print(f"\nDone: https://huggingface.co/datasets/{repo_id}")
+
 
 if __name__ == "__main__":
     main()

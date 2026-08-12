@@ -8,14 +8,10 @@ from tqdm import tqdm
 from datasets import Dataset, DatasetDict, Features, Sequence, Value, ClassLabel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-from src.training.tokenizer import CharacterTokenizer
 
-# One unified dataset serves both training pipelines: 'signs' (pre-segmented
-# cuneiform, tokenized with our own CharacterTokenizer in train.py) and
-# 'text' (cleaned Latin transliteration, tokenized with mBERT's own
-# WordPiece tokenizer in train_mbert.py). Neither side is pre-tokenized here
-# -- each script tokenizes at load time with its own tokenizer/vocab, so the
-# same Arrow dataset works for both without duplicating the split logic.
+# 'signs' (Unicode cuneiform) and 'text' (cleaned Latin transliteration) both
+# live in the same row; train_mbert.py tokenizes 'text' at load time with
+# mBERT's own WordPiece tokenizer. Neither side is pre-tokenized here.
 
 _DETERMINATIVE_RE = re.compile(r"\{[^}]*\}")  # e.g. {m}, {d}, {ki} -- editorial determinatives, dropped entirely (Lazar et al. 2021 do the same with sub/superscripts)
 _BRACKET_CHARS = "[]⸢⸣()<>|"  # editorial uncertainty/restoration brackets and ATF sign-separator (|) -- stripped, content kept
@@ -230,27 +226,15 @@ def main():
     # 1. Deduplicate & Merge
     all_unique_records = load_and_deduplicate_v2(files_to_merge)
     
-    # 2. Build Tokenizer Vocabs -- 'text' is stored here (not just derived
-    # later in to_examples) so build_vocab(field='text') can read it directly
-    # from this same file, the same way it already reads 'signs'.
+    # 2. Write the merged, deduplicated pool -- combined_unique.jsonl is the
+    # source prepare_document_dataset.py groups into documents from.
     combined_path = processed_dir / "combined_unique.jsonl"
     with open(combined_path, 'w', encoding='utf-8') as f:
         for r in all_unique_records:
             r['text'] = clean_transliteration(r.get('raw'))
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-    signs_tokenizer = CharacterTokenizer()
-    signs_tokenizer.build_vocab(str(combined_path), min_freq=2, field='signs')
-    vocab_path = processed_dir / "vocab.json"
-    signs_tokenizer.save(str(vocab_path))
-    print(f"Signs vocab size: {len(signs_tokenizer.vocab)}")
 
-    text_tokenizer = CharacterTokenizer()
-    text_tokenizer.build_vocab(str(combined_path), min_freq=2, field='text')
-    vocab_translit_path = processed_dir / "vocab_translit.json"
-    text_tokenizer.save(str(vocab_translit_path))
-    print(f"Transliteration vocab size: {len(text_tokenizer.vocab)}")
-    
     # 3. Grouped split (90/5/5) -- grouped by tablet_id, not shuffled per line.
     # Lines from the same physical tablet are highly correlated (same
     # formulae, obviously the same period/genre/provenience), so a per-line
