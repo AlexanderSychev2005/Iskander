@@ -1,6 +1,6 @@
 # Prediction demo: text-only vs vision (provenience) model
 
-`20` test-split tablets, seed=42. Both models see the exact same masked positions per example (`[MASK]` shown at every chosen position, 15% of eligible tokens) -- differences in restoration come only from the two models' separately trained weights, not from the image itself (the image only reaches `provenience_head`, see module docstring). The metadata table's `provenience` row is where the image can actually change an answer.
+20 random test-split tablets, seed=42. Both models see the exact same masked positions per example (`[MASK]` shown at every chosen position, 15% of eligible tokens) -- differences in restoration come only from the two models' separately trained weights, not from the image itself (the image only reaches `provenience_head`, see module docstring). The metadata table's `provenience` row is where the image can actually change an answer.
 
 ## Example 1 — `P109423` (has photo: False)
 
@@ -113,6 +113,8 @@ Top-1 accuracy on this example: text-only 6/7 (86%), vision 6/7 (86%)
 
 ## Example 4 — `P125001` (has photo: True)
 
+![P125001](demo_images/P125001.jpg)
+
 **Original text:**
 > 1geš₂ 3u 1diš u₈
 
@@ -139,6 +141,8 @@ Top-1 accuracy on this example: text-only 0/1 (0%), vision 0/1 (0%)
 ---
 
 ## Example 5 — `P251690` (has photo: True)
+
+![P251690](demo_images/P251690.jpg)
 
 **Original text:**
 > 1bur₃ @ c GAN2 e₂ - hur - sag 1eše₃ @ c 1 / 2iku @ c 1 / 4iku @ c ur - D gidri
@@ -170,6 +174,8 @@ Top-1 accuracy on this example: text-only 4/5 (80%), vision 4/5 (80%)
 ---
 
 ## Example 6 — `P315363` (has photo: True)
+
+![P315363](demo_images/P315363.jpg)
 
 **Original text:**
 > ki šum - šu - nu ensi₂ a - na qa₂ - be₂ - e D ba - u₄ buru₁₄ - še₃ erin₂ še gur₁₀ - ku₅ i - il - - ul i - il - la - ak - ma
@@ -271,6 +277,8 @@ Top-1 accuracy on this example: text-only 28/40 (70%), vision 29/40 (72%)
 
 ## Example 8 — `P110147` (has photo: True)
 
+![P110147](demo_images/P110147.jpg)
+
 **Original text:**
 > 1aš @ c gu - na im - e tak₄ - a ki ur - Dba - ba₆ dumu a - tu bur₂ gu₂ - ab - ba ki dah - dam 1aš @ c ur - Dal - la sag eš₃ - ki - ag₂ sipa ensi₂
 
@@ -305,6 +313,8 @@ Top-1 accuracy on this example: text-only 6/9 (67%), vision 6/9 (67%)
 ---
 
 ## Example 9 — `P397213` (has photo: True)
+
+![P397213](demo_images/P397213.jpg)
 
 **Original text:**
 > na - ṣir zik - ri an - šar₂ lugal dingir - meš la pa - lih₃ en - ti - ia [unused1] hab - ba - tu₂ šar - ra - qu lu ša₂ hi - ṭu ih - ṭu - u da - mi it - bu - ku sag lu₂ nam ak - li ša₂ - pi - ru re - du - u a - na kur šub - ri - a ih - li - qu an - nu - u ki - i - am aš₂ - pur - šu - ma lu₂ - meš an - nu - ti lu₂ nimgir₂ ina kur - ka šul - si - ma - ti pu - uh - hi - ra - šu₂ - nu - ti - ma eṭ - lu e - du la tu - maš - šar - ma igi D pirig - gal gašan gal - ti e₂ - kur šu - uṣ - bit - su - nu - ti - ti ši - pir - tu ša₂ bul - lu - ṭu zi - ti₃ - šu₂ - nu [unused1] bu it - ti lu₂ a kin - ia iri kaskal kur an - šar₂ ki li - iṣ - bat - u - nim - ma ku dam - qu ša₂ ba - laṭ zi - ti₃ - šu₂ in - ši - - meš kur an - šar₂ ki ARAD2 - meš - ia pa - nu - uš - šu₂ e - [unused1] uš a - di u₂ - ri - ni ina šu - min lu₂ a kin ša₂ mim - mu - u i - pu - lu - uš u₂ - ša₂ - an - na - i - ṣa - ri - ih - u₂ - ti i - bala
@@ -385,6 +395,8 @@ Top-1 accuracy on this example: text-only 35/54 (65%), vision 35/54 (65%)
 ---
 
 ## Example 10 — `P346236` (has photo: True)
+
+![P346236](demo_images/P346236.jpg)
 
 **Original text:**
 > a - na - aš - am₃ ur₅ - lu₂ lu₂ - u₃ za₃ in - ne - e₂ - dub - ba - a za - pa - ag₂ mu - [unused1] - ša₃ gin₆ - na - bi eme - gir₁₅ - ra bi₂ - in - sag - ki tum₂ a₂ ag₂ - ga₂ - ta ba - e - da - an - - še zar nu - ub - ra - ah - a [unused1] - ni nu - šub - ba a₂ u₄ - da - bi - še₃ he₂ - tud₂ - za - na SU KA he₂ - en - za - pa - ag₂ - e sa₂ nu - ub - du₁₁ - ga - am₃ u₃ nam - dub - sar - ra - ba diri - zu - uš an - zu - a sag in - ta - tum₂ aš₂ in - ne - mu₂ in in - ne - dub₂ um - mi - a nig₂ - na - me - a - bi ba - ak diri - še₃ sag ba - gid₂ nig₂ ša₃ - zu ak - mu - un tukumbi nig₂ ša₃ ak - en lu₂ za - e - gin₇ ak šeš - gal - la - na sag im - ta - de₆ - a - aš uruda šir₃ - šir₃ giri₃ - na u₃ - ub - si e₂ an - ni₁₀ - ni₁₀ - ma e₂ - dub - ba - a - ta iti min - am₃ nu - ub - ta - e₃ i₃ - - eš₂ nam - tag ba - e - ra - ab - duh u₄ - da - ta geš igi - ne - ne bi₂ - hur lu₂ - u₁₉ sikil - du₃ - a - bi na - an - ak - e šeš šeš - da nam - ba - an - ne₂ - ta - du₁₁ di nam - mu - e du₁₄ mu₂ diš giri₃ - ni - sa₆ diš D en - ki - ma - an - šum₂ e - ne - bi um - mi - a di in - ne - en - dab₅ - be₂
@@ -482,6 +494,8 @@ Top-1 accuracy on this example: text-only 41/70 (59%), vision 38/70 (54%)
 
 ## Example 11 — `P330592` (has photo: True)
 
+![P330592](demo_images/P330592.jpg)
+
 **Original text:**
 > - D šul - pa -
 
@@ -508,6 +522,8 @@ Top-1 accuracy on this example: text-only 0/1 (0%), vision 1/1 (100%)
 ---
 
 ## Example 12 — `P237148` (has photo: True)
+
+![P237148](demo_images/P237148.jpg)
 
 **Original text:**
 > i - ru - bu [unused1] iš - mu [unused1] [unused1] a a n
@@ -537,6 +553,8 @@ Top-1 accuracy on this example: text-only 0/2 (0%), vision 0/2 (0%)
 
 ## Example 13 — `P105707` (has photo: True)
 
+![P105707](demo_images/P105707.jpg)
+
 **Original text:**
 > 3ban₂ la₂ 2diš sila₃ še - geš - i₃ lugal
 
@@ -564,6 +582,8 @@ Top-1 accuracy on this example: text-only 2/2 (100%), vision 1/2 (50%)
 ---
 
 ## Example 14 — `P272839` (has photo: True)
+
+![P272839](demo_images/P272839.jpg)
 
 **Original text:**
 > sag - e - eš ha - ma - ab - rig₇ - ge u₄ - mu he - su₃ - su₃ - ud
@@ -594,6 +614,8 @@ Top-1 accuracy on this example: text-only 1/4 (25%), vision 1/4 (25%)
 ---
 
 ## Example 15 — `P388547` (has photo: True)
+
+![P388547](demo_images/P388547.jpg)
 
 **Original text:**
 > e - sig₁₇ mušen ga - kad₄ mušen
@@ -651,6 +673,8 @@ Top-1 accuracy on this example: text-only 2/2 (100%), vision 2/2 (100%)
 
 ## Example 17 — `P281816` (has photo: True)
 
+![P281816](demo_images/P281816.jpg)
+
 **Original text:**
 > ši - pir mi - šit - - šu - hi u ri - mu - numun u₂ - ra - a - nu - šim ku₇ - ku₇ šim šim še - li šu₂ - ur - tu - bal te - sek - ina a gazi sar kum₂ - ta - la - aš nig₂ - la₂ - meš DIŠ lu₂ ši - pir mi - šit - ti šu - up - šu - hi u ri - mu - ti za₃ - hi - li še - sa - la na - pa - te geš šinig ta - haš - šal ki zi₃ imgaga hi - hi ina kaš tu - šab - šal - lal - meš - ma ti - uṭ [unused1] qa - meš ti
 
@@ -701,6 +725,8 @@ Top-1 accuracy on this example: text-only 12/25 (48%), vision 12/25 (48%)
 ---
 
 ## Example 18 — `P272556` (has photo: True)
+
+![P272556](demo_images/P272556.jpg)
 
 **Original text:**
 > maš₂ - bi - še₃ gu - ru - dumu puzur₄ - zi - da
