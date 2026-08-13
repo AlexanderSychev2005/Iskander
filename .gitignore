@@ -17,6 +17,7 @@ data/
 
 # Model weights and training output
 checkpoints/
+checkpoints_final_*/
 training_output/
 *.safetensors
 *.pt
