@@ -314,6 +314,9 @@ Top-1 accuracy on this example: text-only 28/40 (70%), vision 29/40 (72%)
 **Cuneiform (Unicode signs, whole document, not position-aligned to the text above):**
 > 𒁹 𒀀 𒌅 𒂼 𒈗 𒀊 𒁀 𒈗 𒀊 𒁀 𒌉 𒇽 𒑐𒋼𒋛 𒅗 𒉡 𒈨 𒀀 𒉈 𒅗 𒌚 𒂡 𒄀 𒌓 𒐈 𒁀 𒉌
 
+**English translation (CDLI):**
+> Atu is the mother of Lugal-abba. "Lugal-abba is not the son of the man of the governor" she said.
+
 **Masked input (7 positions):**
 > 1diš [MASK] - tu ama lugal [MASK] ab - ba [MASK] - ab - ba [MASK] lu₂ ensi₂ - [MASK] nu - me - a bi₂ - du₁₁ iti ezem - Dšul [MASK] gi [MASK]₄ 3diš ba - zal
 
@@ -440,6 +443,9 @@ Top-1 accuracy on this example: text-only 35/54 (65%), vision 34/54 (63%)
 
 **Cuneiform (Unicode signs, whole document, not position-aligned to the text above):**
 > 𒀀 𒈾 𒀸 𒀀𒀭 𒄯 𒇽 𒇽 𒅇 𒍠 𒅔 𒉈 𒂍 𒁾 𒁀 𒀀 𒍝 𒉺 𒉘 𒈬 𒊮 𒄀 𒈾 𒁉 𒅴 𒂠 𒊏 𒉈 𒅔 𒊕 𒆠 𒁺 𒀉 𒉘 𒂷 𒋫 𒁀 𒂊 𒁕 𒀭 𒊺 𒇡 𒉡 𒌒 𒊏 𒄴 𒀀 𒉌 𒉡 𒊒 𒁀 𒀉 𒌓 𒁕 𒁉 𒂠 𒃶 𒍝 𒈾 𒋢 𒅗 𒃶 𒂗 𒍝 𒉺 𒉘 𒂊 𒁲 𒉡 𒌒 𒅗 𒂵 𒀀𒀭 𒅇 𒉆 𒁾 𒊬 𒊏 𒁀 𒋛𒀀 𒍪 𒍑 𒀭 𒍪 𒀀 𒊕 𒅔 𒋫 𒁺 𒀾 𒅔 𒉈 𒊬 𒅔 𒅔 𒉈 𒂀 𒌝 𒈪 𒀀 𒃻 𒈾 𒈨 𒀀 𒁉 𒁀 𒀝 𒋛𒀀 𒂠 𒊕 𒁀 𒁍 𒃻 𒊮 𒍪 𒀝 𒈬 𒌦 𒋗𒃻𒌉𒇲𒁉 𒃻 𒊮 𒀝 𒂗 𒇽 𒍝 𒂊 𒁶 𒀝 𒋀 𒃲 𒆷 𒈾 𒊕 𒅎 𒋫 𒁺 𒀀 𒀸 𒍏 𒂡 𒂡 𒄊 𒈾 𒅇 𒌒 𒋛 𒂍 𒀭 𒆸 𒆸 𒈠 𒂍 𒁾 𒁀 𒀀 𒋫 𒌗 𒈫 𒀀𒀭 𒉡 𒌒 𒋫 𒌓𒁺 𒉌 𒂠 𒉆 𒋳 𒁀 𒂊 𒊏 𒀊 𒃮 𒌓 𒁕 𒋫 𒄑 𒅆 𒉈 𒉈 𒉈 𒄯 𒇽 𒌷 𒂖 𒆕 𒀀 𒁉 𒈾 𒀭 𒀝 𒂊 𒋀 𒋀 𒁕 𒉆 𒁀 𒀭 𒉌 𒋫 𒅗 𒁲 𒉆 𒈬 𒂊 𒈌 𒊬 𒁹 𒄊 𒉌 𒊷 𒁹 <D> 𒂗 𒆠 𒈠 𒀭 𒋧 𒂊 𒉈 𒁉 𒌝 𒈪 𒀀 𒁲 𒅔 𒉈 𒂗 𒆪 𒁉
+
+**English translation (CDLI):**
+> Why do you behave like this? One has rejected the other, cursed the other, insulted the other You put an outcry in the scribal school "By (the possessor of?) a truthful heart he been taught(?) Sumerian The one who, he ... away from(?) the assignment” it was said The sheaf that was not threshed, his ... which did not fall off(?) You should be beaten on account of (the output of) this daily assignment, ... The outcry has not(!) been a regular occurrence(?) Why, the one who is your “big brother” And the one who knows the scribal art better than you Why did you speak with (empty?) praise(?) You have offended(?) him, you have cursed him, you have insulted him The master did(?) everything And grew exceedingly angry (saying?) “do as you wish” If you do as you wish For this auxiliary construction see Attinger ZA 95, 244. Because of the fact that the one who acted like you offended(?) his “big brother” After being struck with the “tablet shaping board” (as) a weapon sixty times After chains were placed on his feet He was confined in the house and did not leave the scribal school for two months Now, the sin has been released for you From this day onwards, their faces have been incised Do not behave insultingly to each other(?) Do not speak out(?) brother with (against) brother, do not initiate legal proceedings (against each other) (As for) the quarrel of both Girini'isag and Enkimanšum The master arrives at a verdict(?) for them Nisaba, praise!
 
 **Masked input (70 positions):**
 > a - na - [MASK] - am₃ ur₅ - lu₂ lu₂ [MASK] [MASK]₃ za₃ in - ne - e₂ - [MASK] - ba - a za - pa - ag₂ mu - [unused1] - ša [MASK] [MASK]₆ - na - bi eme - gir₁₅ - ra bi₂ [MASK] [MASK] - sag - ki tum₂ a [MASK] [MASK] [MASK] [MASK] [MASK]₂ - ta ba - e - da - an - - [MASK] [MASK]r [MASK] - ub - [MASK] - [MASK] - a [unused1] - [MASK] nu - šub - ba a₂ u₄ - da [MASK] bi - [MASK]₃ he₂ - tud₂ [MASK] za - na SU KA he₂ - en - za - pa - ag₂ - [MASK] sa₂ nu - ub [MASK] du [MASK]₁ - [MASK] - am₃ [MASK]₃ nam - [MASK] [MASK] sar - ra - ba diri - zu - uš an - zu - a sag in - ta - [MASK]₂ aš₂ in - ne - [MASK]₂ in in - [MASK] - [MASK]₂ um - mi - a nig₂ - [MASK] - me [MASK] a [MASK] bi [MASK] - ak diri - še₃ sag ba - gi [MASK]₂ ni [MASK]₂ ša₃ - zu ak - mu - un tukumbi nig₂ ša [MASK] [MASK] [MASK] [MASK] lu [MASK] za - e - [MASK]₇ ak [MASK]š - gal - la - na sag im - ta - de [MASK] - a - aš uruda šir [MASK] - ši [MASK]₃ [MASK]₃ - na u [MASK] - ub - si e₂ [MASK] - ni [MASK]₀ - ni₁₀ - ma e [MASK] - dub [MASK] ba - a - ta iti [MASK] - am₃ nu [MASK] ub - [MASK] - e₃ i₃ - - eš₂ [MASK] - tag ba - e [MASK] ra - ab - [MASK]h u₄ - da - ta [MASK] igi - ne - ne bi₂ - hur lu₂ - u₁₉ sikil - du₃ - a - bi na [MASK] an - ak - e šeš šeš [MASK] da nam - ba - an - [MASK]₂ [MASK] ta - du₁₁ di nam [MASK] mu - e du₁₄ mu₂ diš giri₃ - [MASK] [MASK] sa₆ diš D en - ki - ma - an [MASK] šum₂ e - ne - bi um - mi - a di in - ne - en - dab₅ - be₂
@@ -684,6 +690,9 @@ Top-1 accuracy on this example: text-only 4/4 (100%), vision 4/4 (100%)
 
 **Cuneiform (Unicode signs, whole document, not position-aligned to the text above):**
 > 𒂊 𒄀 𒄷 𒂵 𒆒 𒄷
+
+**English translation (CDLI):**
+> the esig bird; the shulu bird; the gakad bird
 
 **Masked input (2 positions):**
 > e - sig₁₇ [MASK]šen ga [MASK] kad₄ mušen

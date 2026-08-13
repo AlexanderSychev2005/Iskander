@@ -19,9 +19,13 @@ directly. The place the image can actually change an answer is the
 provenience row in each example's metadata table.
 """
 import argparse
+import json
 import os
 import random
+import re
 import sys
+import time
+import urllib.request
 
 import torch
 from safetensors.torch import load_file
@@ -35,6 +39,56 @@ from src.training.train_mbert import (
 from src.data_pipeline.review_bboxes_gui import build_path_index
 
 TASKS = ["period", "genre", "language", "provenience"]
+TRANSLATION_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data", "interim", "cdli_translation_cache.json",
+)
+
+
+def load_translation_cache():
+    if os.path.exists(TRANSLATION_CACHE_PATH):
+        with open(TRANSLATION_CACHE_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+
+def save_translation_cache(cache):
+    os.makedirs(os.path.dirname(TRANSLATION_CACHE_PATH), exist_ok=True)
+    with open(TRANSLATION_CACHE_PATH, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+
+
+def fetch_translation(tablet_id, cache):
+    """English #tr.en: lines from cdli.earth's live per-artifact API (same
+    ATF the tablet's transliteration itself comes from, confirmed identical
+    to the static bulk dump for P387407 -- but live, so it also covers
+    tablets added to CDLI's translation coverage after our 2022 dump
+    snapshot). Only P###### ids have a CDLI artifact id to query; eBL-only
+    ids (no CDLI P-number) are left untranslated -- eBL's own bulk export
+    has no separate translation field either (checked). Cached to disk since
+    this is a live network call per tablet_id, not something to redo on
+    every demo regeneration."""
+    if tablet_id in cache:
+        return cache[tablet_id]
+    translation = None
+    if tablet_id.startswith("P") and tablet_id[1:].isdigit():
+        try:
+            req = urllib.request.Request(
+                f"https://cdli.earth/artifacts/{tablet_id[1:]}",
+                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+            )
+            raw = urllib.request.urlopen(req, timeout=20).read()
+            data = json.loads(raw)
+            rec = data[0] if isinstance(data, list) else data
+            atf = (rec.get("inscription") or {}).get("atf", "") or ""
+            lines = [l.strip() for l in re.findall(r"#tr\.en:\s*(.+)", atf)]
+            if lines:
+                translation = " ".join(lines)
+        except Exception:
+            translation = None
+        time.sleep(0.3)  # gentle -- same courtesy as the photo-fetch scripts
+    cache[tablet_id] = translation
+    return translation
 
 
 def load_model(checkpoint, model_name, num_labels, use_image, vision_init):
@@ -99,6 +153,10 @@ def main():
                          help="Downscale the full-resolution reference photo so its longer side is at most this "
                               "many pixels (aspect ratio preserved) -- CDLI originals run 2500-5000px+ and are "
                               "several MB each, wasted size for a reference image at markdown-viewer scale")
+    parser.add_argument("--fetch_translations", action="store_true",
+                         help="Look up each example's English translation (CDLI's #tr.en: lines, live "
+                              "cdli.earth API, cached to data/interim/cdli_translation_cache.json) and show it "
+                              "under the transliteration. P###### tablets only; not every tablet has one.")
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
@@ -128,6 +186,8 @@ def main():
     if args.embed_images:
         print("Loading full-resolution photo index (local cache, for display only -- not fed to the model)...")
         full_photo_index = build_path_index()
+
+    translation_cache = load_translation_cache() if args.fetch_translations else {}
 
     print("Loading text-only model...")
     text_model = load_model(args.text_checkpoint, args.model_name, num_labels, use_image=False, vision_init="scratch")
@@ -236,6 +296,10 @@ def main():
         out.append(f"**Original text (transliteration):**\n> {original_display}\n")
         if row.get("signs"):
             out.append(f"**Cuneiform (Unicode signs, whole document, not position-aligned to the text above):**\n> {' '.join(row['signs'])}\n")
+        if args.fetch_translations:
+            translation = fetch_translation(tablet_id, translation_cache)
+            if translation:
+                out.append(f"**English translation (CDLI):**\n> {translation}\n")
         out.append(f"**Masked input ({len(positions)} positions):**\n> {masked_display}\n")
 
         out.append("### Restoration (masked-token predictions)\n")
@@ -266,6 +330,11 @@ def main():
     with open(args.output_file, "w", encoding="utf-8") as f:
         f.write("\n".join(out))
     print(f"Saved to {args.output_file}")
+
+    if args.fetch_translations:
+        save_translation_cache(translation_cache)
+        n_found = sum(1 for tid in [ds[i]["tablet_id"] for i in indices] if translation_cache.get(tid))
+        print(f"Translations found: {n_found}/{len(indices)}")
 
 
 if __name__ == "__main__":
