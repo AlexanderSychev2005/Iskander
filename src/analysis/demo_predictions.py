@@ -95,6 +95,10 @@ def main():
     parser.add_argument("--embed_images", action="store_true",
                          help="Save each example's real photo (if any) next to output_file and embed it in the "
                               "markdown, instead of only noting has-photo True/False")
+    parser.add_argument("--full_photo_max_side", type=int, default=900,
+                         help="Downscale the full-resolution reference photo so its longer side is at most this "
+                              "many pixels (aspect ratio preserved) -- CDLI originals run 2500-5000px+ and are "
+                              "several MB each, wasted size for a reference image at markdown-viewer scale")
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
@@ -207,16 +211,22 @@ def main():
             img_path = os.path.join(img_dir, f"{safe_id}.jpg")
             img.convert("RGB").save(img_path, quality=90)
 
-            # Full-resolution original (all 6 photographed faces, not just the
+            # Full original (all 6 photographed faces, not just the
             # cropped/letterboxed 224x224 the model actually sees) -- for human
             # reference in the writeup, pulled from local cache (same source
             # finalize_vision_crops.py crops from), not the model's own input.
+            # Downscaled (aspect-preserving, PIL's own thumbnail()) to
+            # --full_photo_max_side -- these are reference images, not model
+            # input, so full CDLI resolution (often 2500x5000+, multiple MB
+            # each) is wasted size for no visible gain at markdown-viewer scale.
             full_id = tablet_id[1:] if tablet_id.startswith("P") else None
             full_path = full_photo_index.get(full_id) if full_id else None
             if full_path and os.path.exists(full_path):
                 from PIL import Image as _Image
                 full_out = os.path.join(img_dir, f"{safe_id}_full.jpg")
-                _Image.open(full_path).convert("RGB").save(full_out, quality=88)
+                full_img = _Image.open(full_path).convert("RGB")
+                full_img.thumbnail((args.full_photo_max_side, args.full_photo_max_side), _Image.LANCZOS)
+                full_img.save(full_out, quality=85)
                 out.append(f"| Model input (224x224 crop) | Full photo (all faces, reference only) |")
                 out.append("|---|---|")
                 out.append(f"| ![{tablet_id} crop](demo_images/{safe_id}.jpg) | "
