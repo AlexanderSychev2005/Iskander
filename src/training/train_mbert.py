@@ -51,18 +51,57 @@ IMG_SIZE = 224  # ResNet18's input size, matches Aeneas's own (Methods p.148) an
 # orders of magnitude smaller -- but a ResNet trained fully from scratch at
 # that scale still overfits easily without the augmentation Aeneas explicitly
 # used to fight it ("image augmentations such as zooming, rotation, and
-# adjustments to brightness and contrast", Methods p.148). No horizontal
-# flip: unlike a generic object photo, a mirrored tablet face has reversed
-# sign order/orientation, which is not a valid input for this task. Eval
-# stays deterministic (no augmentation) so checkpoint comparisons aren't
-# noisy -- see TiedWeightSafeTrainer's eval_data_collator override below.
+# adjustments to brightness and contrast", Methods p.148). Widened this
+# session (2026-08-13) to match Aeneas's actual dataloader.py ranges
+# (rotation ±30, brightness/contrast 0.5-1.5x, blur, sharpen, noise) rather
+# than the earlier, much lighter guess. Two deliberate deviations, not
+# oversights: (1) no horizontal flip -- unlike a generic object photo, a
+# mirrored tablet face has reversed sign order/orientation, not a valid
+# input for this task; Aeneas doesn't use one either. (2) no grayscale
+# conversion, unlike Aeneas -- our images stay RGB because vision_init
+# pretrained/finetune loads ImageNet weights whose conv1 filters are trained
+# on 3-channel color; discarding 2/3 of that channel info fights the
+# pretraining rather than helping it, and our corpus (91% "clay", mostly one
+# region/period of excavation photography) has less of the cross-material,
+# cross-photography-style color confound that motivated Aeneas's choice.
+# Also no per-epoch random re-crop from the full original: Aeneas's zoom-crop
+# substitutes for NOT having a human-reviewed bbox at their scale (176k
+# inscriptions); ours (review_bboxes_gui.py) already is human-reviewed and
+# tight, so a from-scratch random crop would as often cut a real sign off as
+# help. Normalized to ImageNet's own mean/std (not Aeneas's [-1,1], which is
+# for their from-scratch grayscale ResNet8) because vision_init
+# pretrained/finetune's ResNet18 weights expect exactly this input
+# distribution -- feeding [0,1] unnormalized pixels into pretrained BatchNorm
+# layers silently mismatches what they were trained on. Eval stays
+# deterministic (no augmentation, but same Normalize) so checkpoint
+# comparisons aren't noisy -- see TiedWeightSafeTrainer's eval_data_collator
+# override below.
+IMAGENET_MEAN, IMAGENET_STD = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+
+
+def _add_pixel_noise(t, max_level=0.05):
+    """Gaussian noise on [0,1] pixel tensor, matching Aeneas's
+    img_add_random_noise (applied pre-normalize, uniform-random strength per
+    sample so most samples get a mild dose and a few get a strong one)."""
+    level = random.uniform(0.0, max_level)
+    return (t + torch.randn_like(t) * level).clamp(0.0, 1.0)
+
+
 IMG_TRANSFORM_TRAIN = tv_transforms.Compose([
     tv_transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    tv_transforms.RandomRotation(10),
-    tv_transforms.ColorJitter(brightness=0.2, contrast=0.2),
+    tv_transforms.RandomAffine(degrees=30, shear=10),  # rotation + skew in one pass, matches their ranges
+    tv_transforms.ColorJitter(brightness=0.4, contrast=0.4),  # approximates their 0.5-1.5x multiplicative range
+    tv_transforms.RandomApply([tv_transforms.GaussianBlur(5, sigma=(0.1, 2.0))], p=0.5),
+    tv_transforms.RandomAdjustSharpness(sharpness_factor=2.0, p=0.5),
     tv_transforms.ToTensor(),
+    tv_transforms.Lambda(_add_pixel_noise),
+    tv_transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
 ])
-IMG_TRANSFORM_EVAL = tv_transforms.Compose([tv_transforms.Resize((IMG_SIZE, IMG_SIZE)), tv_transforms.ToTensor()])
+IMG_TRANSFORM_EVAL = tv_transforms.Compose([
+    tv_transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    tv_transforms.ToTensor(),
+    tv_transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+])
 
 # The two real-damage signals that survive into the 'text' column (see
 # prepare_hf_dataset.py's clean_transliteration): a standalone 'x' is one
@@ -241,6 +280,14 @@ class MBertMultiTask(nn.Module):
             resnet.fc = nn.Identity()
             self.vision_cnn = resnet
             self.vision_proj = nn.Linear(512, img_feat_dim)
+            # Matches Aeneas's own x_img_norm (model.py: LayerNorm right after
+            # the vision embedding, before concatenation with text) -- cls_embed
+            # comes out of BERT already well-scaled by its internal LayerNorms;
+            # a raw linear projection of ResNet features has no such guarantee,
+            # especially early in training, so provenience_head would otherwise
+            # have to learn to correct for a scale mismatch between its two
+            # input halves on top of the actual classification task.
+            self.vision_norm = nn.LayerNorm(img_feat_dim)
 
     def forward(self, input_ids, attention_mask=None, pixel_values=None, labels=None,
                 period_labels=None, genre_labels=None, language_labels=None, provenience_labels=None):
@@ -250,7 +297,7 @@ class MBertMultiTask(nn.Module):
 
         cls_embed = seq[:, 0, :]
         if self.use_image:
-            img_feat = self.vision_proj(self.vision_cnn(pixel_values))
+            img_feat = self.vision_norm(self.vision_proj(self.vision_cnn(pixel_values)))
             head_in = torch.cat([cls_embed, img_feat], dim=-1)
         else:
             head_in = cls_embed
