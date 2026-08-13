@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from src.training.train_mbert import (
     MBertMultiTask, mark_damage_signals, build_tablet_image_index_from_hf, IMG_TRANSFORM_EVAL,
 )
+from src.data_pipeline.review_bboxes_gui import build_path_index
 
 TASKS = ["period", "genre", "language", "provenience"]
 
@@ -119,6 +120,11 @@ def main():
     image_index = build_tablet_image_index_from_hf(args.data_dir)
     zero_image = torch.zeros(3, 224, 224)
 
+    full_photo_index = {}
+    if args.embed_images:
+        print("Loading full-resolution photo index (local cache, for display only -- not fed to the model)...")
+        full_photo_index = build_path_index()
+
     print("Loading text-only model...")
     text_model = load_model(args.text_checkpoint, args.model_name, num_labels, use_image=False, vision_init="scratch")
     print("Loading vision model...")
@@ -200,8 +206,26 @@ def main():
             safe_id = tablet_id.replace(":", "_").replace(",", "_")
             img_path = os.path.join(img_dir, f"{safe_id}.jpg")
             img.convert("RGB").save(img_path, quality=90)
-            out.append(f"![{tablet_id}](demo_images/{safe_id}.jpg)\n")
-        out.append(f"**Original text:**\n> {original_display}\n")
+
+            # Full-resolution original (all 6 photographed faces, not just the
+            # cropped/letterboxed 224x224 the model actually sees) -- for human
+            # reference in the writeup, pulled from local cache (same source
+            # finalize_vision_crops.py crops from), not the model's own input.
+            full_id = tablet_id[1:] if tablet_id.startswith("P") else None
+            full_path = full_photo_index.get(full_id) if full_id else None
+            if full_path and os.path.exists(full_path):
+                from PIL import Image as _Image
+                full_out = os.path.join(img_dir, f"{safe_id}_full.jpg")
+                _Image.open(full_path).convert("RGB").save(full_out, quality=88)
+                out.append(f"| Model input (224x224 crop) | Full photo (all faces, reference only) |")
+                out.append("|---|---|")
+                out.append(f"| ![{tablet_id} crop](demo_images/{safe_id}.jpg) | "
+                           f"![{tablet_id} full](demo_images/{safe_id}_full.jpg) |\n")
+            else:
+                out.append(f"![{tablet_id}](demo_images/{safe_id}.jpg)\n")
+        out.append(f"**Original text (transliteration):**\n> {original_display}\n")
+        if row.get("signs"):
+            out.append(f"**Cuneiform (Unicode signs, whole document, not position-aligned to the text above):**\n> {' '.join(row['signs'])}\n")
         out.append(f"**Masked input ({len(positions)} positions):**\n> {masked_display}\n")
 
         out.append("### Restoration (masked-token predictions)\n")
