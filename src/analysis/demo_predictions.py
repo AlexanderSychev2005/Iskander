@@ -87,7 +87,13 @@ def main():
     parser.add_argument("--max_length", type=int, default=512)
     parser.add_argument("--mlm_probability", type=float, default=0.15)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--tablet_ids", type=str, default=None,
+                         help="Comma-separated tablet_id list to use instead of random sampling (order preserved). "
+                              "Overrides --n_examples.")
     parser.add_argument("--output_file", type=str, default="predictions_demo.md")
+    parser.add_argument("--embed_images", action="store_true",
+                         help="Save each example's real photo (if any) next to output_file and embed it in the "
+                              "markdown, instead of only noting has-photo True/False")
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
@@ -118,22 +124,35 @@ def main():
     print("Loading vision model...")
     vision_model = load_model(args.vision_checkpoint, args.model_name, num_labels, use_image=True, vision_init="finetune")
 
-    # Prefer examples that actually have a real photo, so the vision model's
-    # provenience row isn't just running on the same all-zero placeholder as
-    # text-only every time -- otherwise most of the demo would show no
-    # possible difference by construction.
-    has_photo = [i for i in range(len(ds)) if ds[i]["tablet_id"] in image_index]
-    no_photo = [i for i in range(len(ds)) if ds[i]["tablet_id"] not in image_index]
-    rng.shuffle(has_photo)
-    rng.shuffle(no_photo)
-    n_photo = min(len(has_photo), max(1, args.n_examples * 2 // 3))
-    indices = has_photo[:n_photo] + no_photo[:args.n_examples - n_photo]
-    rng.shuffle(indices)
-    print(f"Selected {len(indices)} examples ({n_photo} with a real photo, {len(indices) - n_photo} without)")
+    if args.tablet_ids:
+        wanted = [t.strip() for t in args.tablet_ids.split(",") if t.strip()]
+        id_to_idx = {ds[i]["tablet_id"]: i for i in range(len(ds))}
+        indices = []
+        for tid in wanted:
+            if tid not in id_to_idx:
+                print(f"  WARNING: {tid} not found in {args.split} split, skipping")
+                continue
+            indices.append(id_to_idx[tid])
+        print(f"Selected {len(indices)}/{len(wanted)} requested tablets")
+    else:
+        # Prefer examples that actually have a real photo, so the vision model's
+        # provenience row isn't just running on the same all-zero placeholder as
+        # text-only every time -- otherwise most of the demo would show no
+        # possible difference by construction.
+        has_photo = [i for i in range(len(ds)) if ds[i]["tablet_id"] in image_index]
+        no_photo = [i for i in range(len(ds)) if ds[i]["tablet_id"] not in image_index]
+        rng.shuffle(has_photo)
+        rng.shuffle(no_photo)
+        n_photo = min(len(has_photo), max(1, args.n_examples * 2 // 3))
+        indices = has_photo[:n_photo] + no_photo[:args.n_examples - n_photo]
+        rng.shuffle(indices)
+        print(f"Selected {len(indices)} examples ({n_photo} with a real photo, {len(indices) - n_photo} without)")
 
+    selection_note = (f"{len(indices)} hand-picked tablet(s) (`--tablet_ids`)" if args.tablet_ids
+                       else f"{len(indices)} random test-split tablets, seed={args.seed}")
     out = []
     out.append("# Prediction demo: text-only vs vision (provenience) model\n")
-    out.append(f"`{args.n_examples}` test-split tablets, seed={args.seed}. Both models see the exact same "
+    out.append(f"{selection_note}. Both models see the exact same "
                f"masked positions per example (`[MASK]` shown at every chosen position, {args.mlm_probability:.0%} "
                "of eligible tokens) -- differences in restoration come only from the two models' separately "
                "trained weights, not from the image itself (the image only reaches `provenience_head`, see module "
@@ -175,6 +194,13 @@ def main():
         original_display = tokenizer.decode(input_ids[1:-1], skip_special_tokens=False)
 
         out.append(f"## Example {n} — `{tablet_id}` (has photo: {img is not None})\n")
+        if img is not None and args.embed_images:
+            img_dir = os.path.join(os.path.dirname(os.path.abspath(args.output_file)) or ".", "demo_images")
+            os.makedirs(img_dir, exist_ok=True)
+            safe_id = tablet_id.replace(":", "_").replace(",", "_")
+            img_path = os.path.join(img_dir, f"{safe_id}.jpg")
+            img.convert("RGB").save(img_path, quality=90)
+            out.append(f"![{tablet_id}](demo_images/{safe_id}.jpg)\n")
         out.append(f"**Original text:**\n> {original_display}\n")
         out.append(f"**Masked input ({len(positions)} positions):**\n> {masked_display}\n")
 
