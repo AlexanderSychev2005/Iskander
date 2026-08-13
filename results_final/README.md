@@ -22,8 +22,19 @@ is the number to actually cite.
   top-1/top-3 restoration guess per masked token side by side, both models'
   metadata predictions (with confidence) vs. ground truth, and -- where a
   real photo exists -- both the 224x224 crop the model actually sees and
-  the full-resolution original (all photographed faces) for reference.
-  Provenience rows where the two models disagree are flagged `<- differs`.
+  the full-resolution original (all photographed faces, downscaled to 900px
+  longer side) for reference, and -- where CDLI has one -- an English
+  translation. Provenience rows where the two models disagree are flagged
+  `<- differs`.
+
+  Translation coverage is honestly uneven, not a bug: `predictions_demo_showcase.md`
+  found one (P387407, an ordinary letter) out of 8 -- the other 7 are
+  eBL-sourced literary fragments (Gilgamesh etc.) with no CDLI inscription
+  record at all and no translation field in eBL's own API either (checked
+  both live). `predictions_demo.md`'s random administrative/lexical sample
+  did better, 3/20. Same wall this session already hit with K.3375: open
+  translations for these literary works don't really exist outside
+  copyrighted scholarly editions.
 - `demo_images/` — `<tablet_id>.jpg` (model-input crop) and
   `<tablet_id>_full.jpg` (full original, reference only) for every example
   with a photo in either demo file.
@@ -101,7 +112,7 @@ uv run python src/analysis/demo_predictions.py \
   --text_checkpoint checkpoints_final_text/final_model \
   --vision_checkpoint checkpoints_final_vision/final_model \
   --data_dir AlexSychovUN/Iskander-Dataset --hf_config documents --split test \
-  --n_examples 20 --context_char_max 850 --max_length 512 --embed_images --seed 42 \
+  --n_examples 20 --context_char_max 850 --max_length 512 --embed_images --fetch_translations --seed 42 \
   --output_file results_final/predictions_demo.md
 
 uv run python src/analysis/demo_predictions.py \
@@ -109,7 +120,7 @@ uv run python src/analysis/demo_predictions.py \
   --vision_checkpoint checkpoints_final_vision/final_model \
   --data_dir AlexSychovUN/Iskander-Dataset --hf_config documents --split test \
   --tablet_ids "P273207,P285823,P273223,P402919,ebl:BM.42004,P404643,P402685,P387407" \
-  --context_char_max 850 --max_length 512 --embed_images \
+  --context_char_max 850 --max_length 512 --embed_images --fetch_translations \
   --output_file results_final/predictions_demo_showcase.md
 ```
 
