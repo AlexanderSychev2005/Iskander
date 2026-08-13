@@ -54,7 +54,7 @@ IMG_SIZE = 224  # ResNet18's input size, matches Aeneas's own (Methods p.148) an
 # adjustments to brightness and contrast", Methods p.148). Widened this
 # session (2026-08-13) to match Aeneas's actual dataloader.py ranges
 # (rotation ±30, brightness/contrast 0.5-1.5x, blur, sharpen, noise) rather
-# than the earlier, much lighter guess. Two deliberate deviations, not
+# than the earlier, much lighter guess. Three deliberate deviations, not
 # oversights: (1) no horizontal flip -- unlike a generic object photo, a
 # mirrored tablet face has reversed sign order/orientation, not a valid
 # input for this task; Aeneas doesn't use one either. (2) no grayscale
@@ -68,7 +68,15 @@ IMG_SIZE = 224  # ResNet18's input size, matches Aeneas's own (Methods p.148) an
 # substitutes for NOT having a human-reviewed bbox at their scale (176k
 # inscriptions); ours (review_bboxes_gui.py) already is human-reviewed and
 # tight, so a from-scratch random crop would as often cut a real sign off as
-# help. Normalized to ImageNet's own mean/std (not Aeneas's [-1,1], which is
+# help. (3) rotation/shear capped at 15/5, not Aeneas's 30/10 -- for the same
+# tight-bbox reason: their rotation runs on the padded-to-full-side original
+# with room to spare before their own crop is chosen, ours runs on the
+# already-tight final 224x224 crop. Checked visually on 20 random samples
+# (scratchpad/aug_sheet_*.jpg vs aug15_sheet_*.jpg, session 2026-08-13): at
+# 30/10 several near-square, frame-filling tablets (mostly Ur III
+# administrative texts, which run closer to square than the corpus average)
+# lost real inscribed corner/edge content past the frame boundary; at 15/5
+# the same samples stayed fully in frame. Normalized to ImageNet's own mean/std (not Aeneas's [-1,1], which is
 # for their from-scratch grayscale ResNet8) because vision_init
 # pretrained/finetune's ResNet18 weights expect exactly this input
 # distribution -- feeding [0,1] unnormalized pixels into pretrained BatchNorm
@@ -89,7 +97,7 @@ def _add_pixel_noise(t, max_level=0.05):
 
 IMG_TRANSFORM_TRAIN = tv_transforms.Compose([
     tv_transforms.Resize((IMG_SIZE, IMG_SIZE)),
-    tv_transforms.RandomAffine(degrees=30, shear=10),  # rotation + skew in one pass, matches their ranges
+    tv_transforms.RandomAffine(degrees=15, shear=5),  # not Aeneas's 30/10 -- see note above, visually checked
     tv_transforms.ColorJitter(brightness=0.4, contrast=0.4),  # approximates their 0.5-1.5x multiplicative range
     tv_transforms.RandomApply([tv_transforms.GaussianBlur(5, sigma=(0.1, 2.0))], p=0.5),
     tv_transforms.RandomAdjustSharpness(sharpness_factor=2.0, p=0.5),
