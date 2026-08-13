@@ -1,6 +1,6 @@
 # Prediction demo: text-only vs vision (provenience) model
 
-7 hand-picked tablet(s) (`--tablet_ids`). Both models see the exact same masked positions per example (`[MASK]` shown at every chosen position, 15% of eligible tokens) -- differences in restoration come only from the two models' separately trained weights, not from the image itself (the image only reaches `provenience_head`, see module docstring). The metadata table's `provenience` row is where the image can actually change an answer.
+8 hand-picked tablet(s) (`--tablet_ids`). Both models see the exact same masked positions per example (`[MASK]` shown at every chosen position, 15% of eligible tokens) -- differences in restoration come only from the two models' separately trained weights, not from the image itself (the image only reaches `provenience_head`, see module docstring). The metadata table's `provenience` row is where the image can actually change an answer.
 
 ## Example 1 — `P273207` (has photo: True)
 
@@ -255,5 +255,85 @@ Top-1 accuracy on this example: text-only 3/6 (50%), vision 3/6 (50%)
 | genre | (no label) | Literary & Scholarly (0.46) | Literary & Scholarly (0.79) |
 | language | Akkadian | Akkadian (0.52) | Akkadian (0.70) |
 | provenience | Nineveh | Nippur (0.71) | Nippur (0.40) |
+
+---
+
+## Example 8 — `P387407` (has photo: True)
+
+![P387407](demo_images/P387407.jpg)
+
+**Original text:**
+> um - ma i - din - Dsuen - ma Dutu Dmarduk u₃ Dnin - šubur tug₂ ṣu₂ - ba - a - at a - wi - le - e ša - at - tam a - na ša - at - tim i - da - am - mi - qu₂ at - ti tug₂ ṣu₂ - ba - a - ti tu - qa₂ - al - la - li i - na tug₂ ṣu₂ - ba - ti - ia qu₃ - ul - lu - lim u₃ ku - uz - zi ta - aš - ta - ri - i i - na siki hi - a i - na bi - ti - ni ki - ma a - ka - lim in - na - ka - la at - ti tug₂ ṣu₂ - ba - ti tu - qa₂ - al - li - li dumu diš Diškur - i - di₂ - nam ša a - bu - šu ṣu₂ - ha - ar a - bi - ia ši - na tug₂ ṣu₂ - ba - te - e eš - šu - tim - bi - iš at - a - na tug₂ ṣu₂ - ba - ti - ia - te - en ta - ta - na - ah - da - ri ki - ma at - ti ia - ti tu - ul - di - in - ni ša - a - ti um - ma - šu a - na le - qi₂ - tim u₃ ki - ma ša - a - ti um - ma - šu i - ra - a - mu - šu at - ti - a - ti u₂ - ul ta - ra - am - mi - in - ni
+
+**Masked input (52 positions):**
+> um - ma i - din - Dsuen - ma Dutu Dmar [MASK] u₃ Dnin - šu [MASK] tug₂ ṣu [MASK] - ba - a [MASK] at [MASK] [MASK] wi - le [MASK] e ša - at - tam a - na ša [MASK] at - tim i - da - am - mi - qu₂ at - ti tug₂ ṣu₂ - ba - a - ti tu - qa₂ [MASK] al - la [MASK] li i - na tug₂ ṣu₂ - [MASK] - ti - ia qu₃ - ul [MASK] [MASK] - lim [MASK]₃ ku - [MASK] [MASK] zi [MASK] - aš - ta - [MASK] - i i - na siki hi - a [MASK] [MASK] [MASK] bi - ti [MASK] ni ki - ma a [MASK] ka [MASK] lim in - na - ka - la at [MASK] ti tug₂ ṣ [MASK]₂ - ba - ti tu - qa₂ - al - li - [MASK] dumu diš Di [MASK] [MASK] - i [MASK] di₂ - nam [MASK] a - bu - šu ṣu [MASK] - ha [MASK] ar a - bi - ia ši - na tug₂ ṣu₂ - ba - te - e eš - šu - tim - [MASK] - [MASK] at [MASK] a - na tug₂ ṣu₂ - ba - ti - ia - te - en [MASK] - ta - na - ah - da - ri ki - ma at - ti ia [MASK] ti tu - ul - di - in [MASK] ni ša [MASK] a - ti um [MASK] ma - šu a [MASK] na le - qi₂ - tim u₃ ki - ma ša - a [MASK] ti um - ma [MASK] šu i - ra [MASK] a - mu [MASK] šu [MASK] - [MASK] - [MASK] - ti u [MASK] - ul [MASK] - ra - am [MASK] mi - in - ni
+
+### Restoration (masked-token predictions)
+
+| # | true token | text-only top-1 | text-only top-3 | vision top-1 | vision top-3 | text-only correct | vision correct |
+|---|---|---|---|---|---|---|---|
+| 1 | `##duk` | `##duk` | `##duk`, `-`, `tu` | `##duk` | `##duk`, `-`, `##du` | ✅ | ✅ |
+| 2 | `##bur` | `##bur` | `##bur`, `##b`, `##bar` | `##bur` | `##bur`, `##bar`, `-` | ✅ | ✅ |
+| 3 | `##₂` | `##₂` | `##₂`, `##₃`, `##₄` | `##₂` | `##₂`, `##₃`, `##₄` | ✅ | ✅ |
+| 4 | `-` | `-` | `-`, `.`, `:` | `-` | `-`, `.`, `:` | ✅ | ✅ |
+| 5 | `a` | `a` | `a`, `na`, `i` | `a` | `a`, `i`, `li` | ✅ | ✅ |
+| 6 | `-` | `-` | `-`, `##₃`, `ma` | `-` | `-`, `##₃`, `ma` | ✅ | ✅ |
+| 7 | `-` | `-` | `-`, `##₂`, `##₃` | `-` | `-`, `##₂`, `.` | ✅ | ✅ |
+| 8 | `-` | `-` | `-`, `##₂`, `.` | `-` | `-`, `.`, `##₂` | ✅ | ✅ |
+| 9 | `-` | `-` | `-`, `/`, `.` | `-` | `-`, `.`, `/` | ✅ | ✅ |
+| 10 | `-` | `-` | `-`, `##₂`, `##m` | `-` | `-`, `##₂`, `##m` | ✅ | ✅ |
+| 11 | `ba` | `ba` | `ba`, `bu`, `a` | `ba` | `ba`, `bu`, `a` | ✅ | ✅ |
+| 12 | `-` | `-` | `-`, `ša`, `u` | `-` | `-`, `u`, `ša` | ✅ | ✅ |
+| 13 | `lu` | `li` | `li`, `ša`, `be` | `ša` | `ša`, `be`, `li` | ❌ | ❌ |
+| 14 | `u` | `u` | `u`, `ša`, `giri` | `u` | `u`, `ša`, `giri` | ✅ | ✅ |
+| 15 | `uz` | `ul` | `ul`, `nu`, `ta` | `nu` | `nu`, `ta`, `un` | ❌ | ❌ |
+| 16 | `-` | `-` | `-`, `##₂`, `##₃` | `-` | `-`, `##₂`, `##₃` | ✅ | ✅ |
+| 17 | `ta` | `ta` | `ta`, `na`, `wa` | `ta` | `ta`, `wa`, `na` | ✅ | ✅ |
+| 18 | `ri` | `ki` | `ki`, `ni`, `li` | `ki` | `ki`, `ni`, `ri` | ❌ | ❌ |
+| 19 | `i` | `ša` | `ša`, `dumu`, `la` | `ša` | `ša`, `u`, `i` | ❌ | ❌ |
+| 20 | `-` | `a` | `a`, `##₂`, `##₃` | `a` | `a`, `##₂`, `##₃` | ❌ | ❌ |
+| 21 | `na` | `-` | `-`, `na`, `ma` | `-` | `-`, `na`, `a` | ❌ | ❌ |
+| 22 | `-` | `-` | `-`, `.`, `/` | `-` | `-`, `.`, `/` | ✅ | ✅ |
+| 23 | `-` | `-` | `-`, `##₂`, `.` | `-` | `-`, `.`, `##₂` | ✅ | ✅ |
+| 24 | `-` | `-` | `-`, `##l`, `##₃` | `-` | `-`, `##l`, `##₃` | ✅ | ✅ |
+| 25 | `-` | `-` | `-`, `.`, `a` | `-` | `-`, `.`, `:` | ✅ | ✅ |
+| 26 | `##u` | `##u` | `##u`, `##e`, `##a` | `##u` | `##u`, `##e`, `##a` | ✅ | ✅ |
+| 27 | `li` | `li` | `li`, `lu`, `i` | `li` | `li`, `i`, `lu` | ✅ | ✅ |
+| 28 | `##šku` | `##šku` | `##šku`, `-`, `##Š` | `##šku` | `##šku`, `-`, `##ška` | ✅ | ✅ |
+| 29 | `##r` | `##r` | `##r`, `##ru`, `##bur` | `##r` | `##r`, `##bur`, `##ar` | ✅ | ✅ |
+| 30 | `-` | `-` | `-`, `##₇`, `##₃` | `-` | `-`, `##₃`, `##₇` | ✅ | ✅ |
+| 31 | `ša` | `dumu` | `dumu`, `-`, `diš` | `-` | `-`, `ša`, `dumu` | ❌ | ❌ |
+| 32 | `##₂` | `##₂` | `##₂`, `##₃`, `##₄` | `##₂` | `##₂`, `##₃`, `##₄` | ✅ | ✅ |
+| 33 | `-` | `-` | `-`, `/`, `.` | `-` | `-`, `.`, `/` | ✅ | ✅ |
+| 34 | `bi` | `šu` | `šu`, `ma`, `ki` | `ma` | `ma`, `šu`, `a` | ❌ | ❌ |
+| 35 | `iš` | `ma` | `ma`, `na`, `ni` | `ma` | `ma`, `na`, `ni` | ❌ | ❌ |
+| 36 | `-` | `-` | `-`, `ša`, `##₃` | `-` | `-`, `ša`, `ki` | ✅ | ✅ |
+| 37 | `ta` | `i` | `i`, `it`, `iš` | `i` | `i`, `it`, `a` | ❌ | ❌ |
+| 38 | `-` | `-` | `-`, `a`, `.` | `-` | `-`, `.`, `/` | ✅ | ✅ |
+| 39 | `-` | `-` | `-`, `.`, `/` | `-` | `-`, `.`, `/` | ✅ | ✅ |
+| 40 | `-` | `-` | `-`, `##₂`, `.` | `-` | `-`, `.`, `##₂` | ✅ | ✅ |
+| 41 | `-` | `-` | `-`, `.`, `/` | `-` | `-`, `.`, `/` | ✅ | ✅ |
+| 42 | `-` | `-` | `-`, `##₂`, `.` | `-` | `-`, `##₂`, `+` | ✅ | ✅ |
+| 43 | `-` | `-` | `-`, `.`, `/` | `-` | `-`, `.`, `/` | ✅ | ✅ |
+| 44 | `-` | `-` | `-`, `.`, `:` | `-` | `-`, `.`, `:` | ✅ | ✅ |
+| 45 | `-` | `-` | `-`, `##₂`, `/` | `-` | `-`, `##₂`, `.` | ✅ | ✅ |
+| 46 | `-` | `-` | `-`, `/`, `##₂` | `-` | `-`, `/`, `##₂` | ✅ | ✅ |
+| 47 | `at` | `i` | `i`, `tu`, `ša` | `i` | `i`, `ša`, `a` | ❌ | ❌ |
+| 48 | `ti` | `na` | `na`, `ta`, `ba` | `ša` | `ša`, `na`, `ba` | ❌ | ❌ |
+| 49 | `a` | `a` | `a`, `at`, `nu` | `a` | `a`, `at`, `nu` | ✅ | ✅ |
+| 50 | `##₂` | `##₂` | `##₂`, `##₃`, `##₄` | `##₂` | `##₂`, `##₃`, `##₄` | ✅ | ✅ |
+| 51 | `ta` | `i` | `i`, `ta`, `tu` | `i` | `i`, `tu`, `ta` | ❌ | ❌ |
+| 52 | `-` | `-` | `-`, `.`, `/` | `-` | `-`, `.`, `/` | ✅ | ✅ |
+
+Top-1 accuracy on this example: text-only 39/52 (75%), vision 39/52 (75%)
+
+### Metadata predictions
+
+| head | ground truth | text-only prediction | vision prediction |
+|---|---|---|---|
+| period | Old Babylonian | Old Babylonian (0.95) | Old Babylonian (0.94) |
+| genre | Letters | Letters (0.97) | Letters (0.96) |
+| language | Akkadian | Akkadian (0.96) | Akkadian (0.94) |
+| provenience | (no label) | Sippar (0.76) | Sippar (0.82) |
 
 ---
