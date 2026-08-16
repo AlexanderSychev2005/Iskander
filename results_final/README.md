@@ -15,26 +15,34 @@ is the number to actually cite.
   image-conditioned), 377 tablets in the `vision` config's test split.
 - `predictions_demo.md` — 20 random test-split tablets. `predictions_demo_showcase.md`
   — 8 hand-picked tablets (Gilgamesh/Enuma Elish/Atrahasis/Hammurabi + P387407).
-  Both show: original transliteration, the same document's Unicode cuneiform
-  signs (whole-document, not position-aligned to the transliteration --
-  it's the corpus's parallel glyph representation, not a token-by-token
-  match), masked input (`[MASK]` at every chosen position), both models'
-  top-1/top-3 restoration guess per masked token side by side, both models'
-  metadata predictions (with confidence) vs. ground truth, and -- where a
-  real photo exists -- both the 224x224 crop the model actually sees and
-  the full-resolution original (all photographed faces, downscaled to 900px
-  longer side) for reference, and -- where CDLI has one -- an English
-  translation. Provenience rows where the two models disagree are flagged
-  `<- differs`.
+  Each example has:
+  - a one-line **description** (genre/period/collection/publication, pulled
+    from whichever of eBL/CDLI actually has this tablet);
+  - a **side-by-side block**: the 224x224 crop the model actually sees + the
+    full original photo (all photographed faces, downscaled to 900px longer
+    side) on the left, and a genuine **line-by-line table** (cuneiform +
+    transliteration + English translation, by ATF line number/face) on the
+    right -- a real per-line parse of the tablet's own raw ATF, not this
+    project's own flattened whole-document `text`/`signs` columns (which
+    lose line boundaries in the corpus merge);
+  - the flattened original transliteration, whole-document cuneiform signs,
+    and whole-document translation (same content as the line table, joined)
+    for reference/searchability;
+  - the masked input and both models' top-1/top-3 restoration guess per
+    masked token, and both models' metadata predictions (confidence) vs.
+    ground truth -- provenience rows where the two models disagree are
+    flagged `<- differs`.
 
-  Translation coverage is honestly uneven, not a bug: `predictions_demo_showcase.md`
-  found one (P387407, an ordinary letter) out of 8 -- the other 7 are
-  eBL-sourced literary fragments (Gilgamesh etc.) with no CDLI inscription
-  record at all and no translation field in eBL's own API either (checked
-  both live). `predictions_demo.md`'s random administrative/lexical sample
-  did better, 3/20. Same wall this session already hit with K.3375: open
-  translations for these literary works don't really exist outside
-  copyrighted scholarly editions.
+  Description/translation/line-table coverage is honestly uneven, not a
+  bug: `predictions_demo_showcase.md` got a description+line-table for all
+  8, but only 1 (P387407, an ordinary letter) has any translation -- the
+  other 7 are eBL-sourced literary fragments (Gilgamesh etc.) with no CDLI
+  inscription record at all and no translation field in eBL's own API
+  either (checked both live). `predictions_demo.md` did better on
+  translations (3/20, ordinary administrative/lexical texts) and got line
+  tables for 18/20. Same wall this session already hit with K.3375: open
+  translations for literary works don't really exist outside copyrighted
+  scholarly editions.
 - `demo_images/` — `<tablet_id>.jpg` (model-input crop) and
   `<tablet_id>_full.jpg` (full original, reference only) for every example
   with a photo in either demo file.
@@ -112,7 +120,7 @@ uv run python src/analysis/demo_predictions.py \
   --text_checkpoint checkpoints_final_text/final_model \
   --vision_checkpoint checkpoints_final_vision/final_model \
   --data_dir AlexSychovUN/Iskander-Dataset --hf_config documents --split test \
-  --n_examples 20 --context_char_max 850 --max_length 512 --embed_images --fetch_translations --seed 42 \
+  --n_examples 20 --context_char_max 850 --max_length 512 --embed_images --fetch_cdli_info --seed 42 \
   --output_file results_final/predictions_demo.md
 
 uv run python src/analysis/demo_predictions.py \
@@ -120,7 +128,7 @@ uv run python src/analysis/demo_predictions.py \
   --vision_checkpoint checkpoints_final_vision/final_model \
   --data_dir AlexSychovUN/Iskander-Dataset --hf_config documents --split test \
   --tablet_ids "P273207,P285823,P273223,P402919,ebl:BM.42004,P404643,P402685,P387407" \
-  --context_char_max 850 --max_length 512 --embed_images --fetch_translations \
+  --context_char_max 850 --max_length 512 --embed_images --fetch_cdli_info \
   --output_file results_final/predictions_demo_showcase.md
 ```
 
