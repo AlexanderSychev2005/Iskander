@@ -45,7 +45,17 @@ def per_class_report(preds_by_task, labels_by_task, label_configs):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--checkpoint", type=str, required=True, help="Dir with model.safetensors + tokenizer files (e.g. final_model)")
+    parser.add_argument("--checkpoint", type=str, required=True,
+                         help="Dir with model.safetensors + tokenizer files (e.g. final_model). With --untrained, "
+                              "only its tokenizer is used (for the injected Akkadian tokens + damage sentinels, so "
+                              "masking-eligibility and vocab fragmentation stay identical to the trained run) -- "
+                              "model.safetensors is not loaded, so any checkpoint's tokenizer works")
+    parser.add_argument("--untrained", action="store_true",
+                         help="Skip loading --checkpoint's weights -- evaluate the backbone at its plain "
+                              "AutoModelForMaskedLM.from_pretrained(--model_name) state (no Akkadian finetuning at "
+                              "all) with freshly random-initialized metadata heads. The zero-shot/no-finetuning "
+                              "baseline Lazar et al. 2021 also report (their Table 2).")
+    parser.add_argument("--seed", type=int, default=42, help="Only matters for --untrained (random head init)")
     parser.add_argument("--data_dir", type=str, default="AlexSychovUN/Iskander-Dataset")
     parser.add_argument("--hf_config", type=str, default="default", help="'default' (line-level) or 'documents' (tablet-level)")
     parser.add_argument("--split", type=str, default="validation", choices=["validation", "test"], help="Use 'validation' while iterating, 'test' only for the final reported number")
@@ -104,14 +114,20 @@ if __name__ == "__main__":
             image_index = build_tablet_image_index(args.crops_dir, reviewed_only=not args.include_unreviewed)
         print(f"Vision branch on: {len(image_index)} tablets have a real photo")
 
-    print(f"Loading model from {args.checkpoint}...")
+    torch.manual_seed(args.seed)
+    if args.untrained:
+        print(f"Building UNTRAINED model ({args.model_name}'s own pretrained backbone, random-init heads, "
+              f"--checkpoint used only for its tokenizer)...")
+    else:
+        print(f"Loading model from {args.checkpoint}...")
     model = MBertMultiTask(
         args.model_name, num_period=num_labels["period"], num_genre=num_labels["genre"],
         num_language=num_labels["language"], num_provenience=num_labels["provenience"],
         use_image=args.use_image, vision_init=args.vision_init,
     )
-    state_dict = load_file(os.path.join(args.checkpoint, "model.safetensors"))
-    model.load_state_dict(state_dict)
+    if not args.untrained:
+        state_dict = load_file(os.path.join(args.checkpoint, "model.safetensors"))
+        model.load_state_dict(state_dict)
 
     collator = MBertCollator(
         tokenizer, image_index=image_index, img_transform=IMG_TRANSFORM_EVAL,

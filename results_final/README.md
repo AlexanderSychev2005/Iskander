@@ -13,6 +13,17 @@ is the number to actually cite.
   heads.
 - `metrics_vision.json` — same, `checkpoints_final_vision` (provenience
   image-conditioned), 377 tablets in the `vision` config's test split.
+- `metrics_untrained.json` — the zero-finetuning baseline: plain
+  `bert-base-multilingual-cased`'s own pretrained weights (untouched) +
+  freshly random-initialized metadata heads, evaluated the same way on the
+  same `test` split. Uses `checkpoints_final_text/final_model`'s tokenizer
+  (for the injected Akkadian WordPiece tokens + damage sentinels, so
+  masking-eligibility and vocab fragmentation match the trained runs
+  exactly) but none of its trained weights (`evaluate_mbert.py --untrained`).
+  This is the same kind of comparison Lazar et al. 2021 report (their
+  Table 2, finetuned vs. non-finetuned mBERT) -- shows how much of the
+  result is from Akkadian-specific finetuning vs. mBERT's own multilingual
+  pretraining.
 - `predictions_demo.md` — 20 random test-split tablets. `predictions_demo_showcase.md`
   — 8 hand-picked tablets (Gilgamesh/Enuma Elish/Atrahasis/Hammurabi + P387407).
   Each example has:
@@ -49,18 +60,28 @@ is the number to actually cite.
 
 ## Headline numbers (test split, not validation)
 
-| | text-only | vision (provenience) |
-|---|---|---|
-| mlm_mrr | 0.797 | 0.799 |
-| mlm_top5_acc | 0.867 | 0.867 |
-| period macro-F1 | 0.838 | 0.854 |
-| genre macro-F1 | 0.840 | 0.855 |
-| language macro-F1 | 0.846 | 0.841 |
-| **provenience macro-F1** | **0.727** | **0.768** |
+| | untrained (no finetuning) | text-only | vision (provenience) |
+|---|---|---|---|
+| mlm_mrr | 0.512 | 0.797 | 0.799 |
+| mlm_top5_acc | 0.561 | 0.867 | 0.867 |
+| period macro-F1 | 0.062 | 0.838 | 0.854 |
+| genre macro-F1 | 0.053 | 0.840 | 0.855 |
+| language macro-F1 | 0.071 | 0.846 | 0.841 |
+| **provenience macro-F1** | 0.023 | **0.727** | **0.768** |
 
-Matches the validation-split finding closely (+0.042 here vs. +0.039-0.041
-on validation) — the provenience effect holds on genuinely held-out data,
-not just the split used for checkpoint selection during training. Period/
+The untrained column confirms neither result is free: mBERT's own
+pretraining gets restoration to a non-trivial MRR 0.51 zero-shot (matching
+Lazar et al. 2021's own point that multilingual pretraining transfers
+usefully to Akkadian on its own), but the metadata heads are exactly what
+random Linear-layer init on a 4-96-class problem looks like -- effectively
+chance, several classes collapsed to 0 F1 (see `metrics_untrained.json`'s
+per-class breakdown). All four heads' real signal comes entirely from this
+project's finetuning, not from the backbone alone.
+
+Vision vs. text-only matches the validation-split finding closely (+0.042
+here vs. +0.039-0.041 on validation) — the provenience effect holds on
+genuinely held-out data, not just the split used for checkpoint selection
+during training. Period/
 genre/language moving by a few points here (in both directions) is the same
 ordinary run-to-run noise already characterized via the controlled ablation
 in `docs/final_results.md` -- not a new finding, don't read a single-run
@@ -115,6 +136,12 @@ uv run python src/analysis/evaluate_mbert.py \
   --context_char_max 850 --max_length 512 --batch_size 4 \
   --use_image --vision_init finetune --images_from_hf \
   --output_file results_final/metrics_vision.json
+
+uv run python src/analysis/evaluate_mbert.py \
+  --checkpoint checkpoints_final_text/final_model --untrained \
+  --data_dir AlexSychovUN/Iskander-Dataset --hf_config documents --split test \
+  --context_char_max 850 --max_length 512 --batch_size 4 \
+  --output_file results_final/metrics_untrained.json
 
 uv run python src/analysis/demo_predictions.py \
   --text_checkpoint checkpoints_final_text/final_model \
