@@ -44,13 +44,14 @@ from tokenizers.pre_tokenizers import Whitespace
 # tensors stay uniformly shaped -- no explicit missing-modality flag is
 # needed, the head just learns a near-constant image contribution for
 # those rows since the input carries no information.
-# IMAGE_HEADS is the set --image_heads validates against/defaults out of --
-# language is deliberately not a member (see above). Default stays
-# provenience-only per the ablation; --image_heads period,genre,provenience
-# reopens period/genre as an explicit, opt-in experiment now that the vision
-# pipeline itself (normalize/LayerNorm/augmentation, session 2026-08-13) is
-# less likely to be understating whatever signal is actually there.
-IMAGE_HEADS = ("period", "genre", "provenience")
+# Re-ran the period/genre question as a controlled --image_heads experiment
+# after the pipeline fixes below (session 2026-08-13) in case the original
+# null result had been a pipeline artifact -- it wasn't (see
+# docs/final_results.md and docs/ablation_runs/ for the full evidence:
+# period/genre stayed inside the noise floor across multiple runs;
+# provenience alone cleared it). image_heads is settled as provenience-only;
+# the CLI no longer exposes a way to change it -- see MBertMultiTask's
+# image_heads parameter if this needs reopening.
 IMG_SIZE = 224  # ResNet18's input size, matches Aeneas's own (Methods p.148) and finalize_vision_crops.py's stored size
 # Per-class image counts (~150-300) are the same order of magnitude as
 # Aeneas's own average (~8,843 images / 62 provinces =~ 142/class), not
@@ -256,13 +257,13 @@ class MBertMultiTask(nn.Module):
         hidden_size = self.backbone.config.hidden_size
         self.use_image = use_image
         self.meta_weight = meta_weight
-        # image_heads: which heads get the concatenated image feature, out of
-        # IMAGE_HEADS (period/genre/provenience) -- see --image_heads. language
-        # is never a valid choice, not a flag oversight: unlike the other three,
-        # there's no plausible visual cue for which language a text is in.
-        # Default stays provenience-only, matching both this project's own
-        # 4-way ablation (no reproducible benefit for period/genre) and
-        # Aeneas's own architecture (vision restricted to the geography head).
+        # image_heads: which heads get the concatenated image feature. Settled
+        # as provenience-only (train_mbert.py's CLI no longer exposes a way to
+        # change it -- see docs/final_results.md for the period/genre/language
+        # ablation this settled). This parameter itself stays, rather than
+        # hardcoding provenience directly in forward(), since evaluate_mbert.py
+        # and demo_predictions.py still construct this class directly and
+        # ought to keep working if that decision is ever revisited.
         self.image_heads = set(image_heads) if use_image else set()
 
         vision_head_in = hidden_size + img_feat_dim if use_image else hidden_size
@@ -626,9 +627,7 @@ def train():
     parser.add_argument("--max_length", type=int, default=96)
     parser.add_argument("--precision", type=str, choices=["fp32", "fp16", "bf16"], default="fp16", help="Mixed precision mode -- fp16 for T4/Colab, bf16 for Ampere+ (A100/newer)")
     parser.add_argument("--resume_from_checkpoint", type=str, default=None, help="Path to a specific checkpoint, or 'auto' to resume from the latest one in --save_dir")
-    parser.add_argument("--use_image", action="store_true", help="Add the vision branch (Aeneas-style concat), scoped to --image_heads -- off by default, identical behavior to before this flag existed")
-    parser.add_argument("--image_heads", type=str, default="provenience", help=f"Comma-separated subset of {IMAGE_HEADS} to condition on the image when --use_image is set (language is never eligible -- no plausible visual signal). Default provenience-only matches the project's own ablation + Aeneas's architecture; pass e.g. 'period,genre,provenience' to run the all-heads experiment")
-    parser.add_argument("--vision_init", type=str, choices=["scratch", "pretrained", "finetune"], default="scratch", help="scratch: random-init ResNet18, fully trainable. pretrained: frozen ImageNet ResNet18 (linear probe). finetune: ImageNet-init ResNet18, NOT frozen -- adapts pretrained features to tablet photos")
+    parser.add_argument("--use_image", action="store_true", help="Add the vision branch (Aeneas-style concat), always scoped to provenience_head only and ImageNet-finetune init -- off by default. See docs/final_results.md for why these are no longer configurable: the period/genre and scratch/pretrained/finetune ablations are settled, not open choices")
     parser.add_argument("--crops_dir", type=str, default=r"C:\Programming\akkadian\data\vision_dataset_final", help="Dir with <tablet id>.jpg crops + crops_manifest.jsonl (see finalize_vision_crops.py); ignored if --images_from_hf")
     parser.add_argument("--include_unreviewed", action="store_true", help="Also use tablets whose bbox was never manually reviewed (raw CuneiML bbox, ~58%% reliable) -- off by default, and not meaningful with --images_from_hf (the published vision config is reviewed-only already)")
     parser.add_argument("--images_from_hf", action="store_true", help="Load the vision config straight from --data_dir's HF repo instead of a local --crops_dir -- no scp'ing image folders to a training box")
@@ -699,11 +698,11 @@ def train():
     if args.use_image:
         if args.images_from_hf:
             image_index = build_tablet_image_index_from_hf(args.data_dir)
-            logger.info(f"Vision branch on ({args.vision_init}): {len(image_index)} tablets have a real photo "
+            logger.info(f"Vision branch on (finetune, provenience_head only): {len(image_index)} tablets have a real photo "
                         f"(loaded from {args.data_dir}'s 'vision' config); everything else gets an all-zero placeholder image")
         else:
             image_index = build_tablet_image_index(args.crops_dir, reviewed_only=not args.include_unreviewed)
-            logger.info(f"Vision branch on ({args.vision_init}): {len(image_index)} tablets have a real photo "
+            logger.info(f"Vision branch on (finetune, provenience_head only): {len(image_index)} tablets have a real photo "
                         f"({'including' if args.include_unreviewed else 'excluding'} unreviewed bboxes); "
                         f"everything else gets an all-zero placeholder image")
         # TRAIN only: cap each tablet to one real image showing per epoch
@@ -735,20 +734,12 @@ def train():
     num_labels = {task: len(label_configs[task]["labels"]) for task in tasks}
     logger.info(f"Metadata head sizes from {label_config_path}: {num_labels}")
 
-    image_heads = tuple(h.strip() for h in args.image_heads.split(",") if h.strip())
-    invalid = set(image_heads) - set(IMAGE_HEADS)
-    if invalid:
-        raise ValueError(f"--image_heads: {invalid} not in {IMAGE_HEADS} (language is never eligible -- no plausible visual signal)")
-
     logger.info(f"Initializing {args.model_name}...")
     model = MBertMultiTask(
         args.model_name, num_period=num_labels["period"], num_genre=num_labels["genre"],
         num_language=num_labels["language"], num_provenience=num_labels["provenience"],
-        meta_weight=args.meta_weight, use_image=args.use_image, vision_init=args.vision_init,
-        image_heads=image_heads,
+        meta_weight=args.meta_weight, use_image=args.use_image, vision_init="finetune",
     )
-    if args.use_image:
-        logger.info(f"Image-conditioned heads: {image_heads}")
 
     # TrainingArguments(logging_dir=...) is deprecated in favor of this env
     # var (transformers >= 5.x) -- must be set before the TensorBoardCallback
