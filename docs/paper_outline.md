@@ -1,223 +1,106 @@
 # Paper Outline & Sourced Talking Points
 
-**Target:** a Kyivan-style short paper (see `Slavic Text Restoration`, Eremeev & Sychov, Overleaf — structure: Introduction / Related Work / Data / Methods / Results / Conclusion), not a diploma. This project's deliverable is a paper, not a thesis — `docs/thesis_outline*.md` were removed for this reason.
+Target: a short NLP-conference paper (Introduction / Related Work / Data / Methods / Results / Conclusion — the standard shape, e.g. Lazar et al. 2021's own EMNLP paper, not a diploma). Length target: dense, like Aeneas/Ithaca/Lazar/Pythia — one paragraph per point, not a page. Checked directly against `aeneas.pdf`/`akkadian.pdf`: neither leans on large in-text tables — a dataset gets one dense paragraph with the essential numbers inline, and a full breakdown (if any) goes in supplementary material, not the main text. Follow that density here.
 
-Every point below cites where it came from: a published source (author, year, exact page/section) or "this work" (a decision/finding made in this project, with the relevant file). Use these as talking points — write the actual prose yourself. Follows the same citation discipline as the (removed) diploma outline.
+**Format:** each point below is `- Thesis. (Source Year, p.X)` — one claim, one citation, nothing else. Expand into prose only when actually drafting the paper.
 
-**What we actually have to report** (so the outline below stays grounded in real results, not aspirational ones):
-- Two trained models, both mBERT (`bert-base-multilingual-cased`) fine-tuned jointly on masked-token restoration + 4 metadata heads (period, genre, language, provenience): a text-only model and a text+image model where the image reaches **only** `provenience_head`.
-- A zero-shot / no-finetuning mBERT baseline (`results_final/metrics_untrained.json`).
-- A controlled ablation establishing that the image only helps `provenience`, not `period`/`genre` (`docs/final_results.md`, `docs/ablation_runs/`).
-- No custom from-scratch architecture in the final results — that track was built, compared, and abandoned as unproductive relative to mBERT at comparable cost (worth one sentence in Related Work/Discussion, not a whole section, since it did not ship).
+**What we actually have to report:** two mBERT models (text-only; text+image where the image reaches only `provenience_head`) and an untrained baseline. No from-scratch architecture in the final results — abandoned as unproductive relative to mBERT, worth one sentence, not a section.
 
 ---
 
 ## 1. Introduction
 
-- Cuneiform's damage/loss problem is the same shape as the birch-bark problem Kyivan opens with (Zaliznyak 2004) — physical damage to a writing support creates lacunae that scholars currently fill in manually and subjectively. Akkadian's version of this: cuneiform tablets are clay, damaged by breakage, erosion, and in Nineveh's case the library's own destruction; CDLI/eBL both catalogue tens of thousands of tablets never fully transliterated because of exactly this bottleneck.
-  — Cobanoglu et al. 2024, p.3 ("About 50 percent of the roughly half a million cuneiform tablets which have been excavated so far have not yet been transliterated or published" (Streck, 2010)).
-  — Lazar et al. 2021, §1, p.4682 (manual, subjective, time-consuming restoration — same framing Kyivan already uses for Zaliznyak).
-
-- MLM (masked language modeling) reframes "restore the missing sign" as BERT's own pretraining objective — not a bespoke architecture. Same argument Kyivan already makes for BERT/birch-bark; direct precedent specifically for Akkadian.
-  — Lazar et al. 2021, §1, p.4683 ("we identify that the task of masked language modeling... lends itself directly to missing sign prediction").
-  — Devlin et al. 2019, throughout (the MLM pretraining objective itself).
-
-- Motivation chain to state explicitly (this is the paper's actual novelty claim): Pythia (Assael et al. 2019) → Ithaca (Assael et al. 2022, adds geographic + chronological attribution to restoration) → Aeneas (Assael et al. 2025, adds vision + arbitrary-length gaps) is a Greek/Latin epigraphy lineage; Lazar et al. 2021 is the one prior attempt to bring the *restoration* half to Akkadian, but never added attribution heads or vision. This project is the missing combination: Ithaca/Aeneas-style multi-task heads (restoration + period + genre + language + provenience) **and** Aeneas-style vision conditioning, applied to Akkadian for the first time.
-  — This work: no prior Akkadian system combines multi-task attribution with a vision-conditioned head; Lazar et al. 2021 is restoration-only (confirmed by reading their Table 2 and Methods, §4-5, p.4684-4686 — no attribution task at all).
-
-- Historian+model synergy framing (Kyivan's own closing paragraph of §1) — directly reusable, both Ithaca and Aeneas report it, worth restating for Akkadian even though this project itself didn't run a human-in-the-loop study.
-  — Assael et al. 2022, Abstract, p.280 ("the use of Ithaca by historians improved their accuracy from 25% to 72%").
-  — Assael et al. 2025, p.141-142 (Aeneas's own framing of historian-AI collaboration).
+- Cuneiform damage is the field's central bottleneck: about half of the ~500,000 excavated tablets remain untransliterated. (Cobanoglu et al. 2024, p.3, citing Streck 2010)
+- Restoration is currently manual and subjective. (Lazar et al. 2021, §1, p.4682)
+- MLM is not a bespoke architecture for this task — it *is* BERT's own pretraining objective, applied directly. (Lazar et al. 2021, §1, p.4683; Devlin et al. 2019)
+- Motivation chain: Pythia → Ithaca (restoration + geographic/chronological attribution) → Aeneas (+ vision, arbitrary-length gaps) is a Greek/Latin lineage; Lazar et al. 2021 brought restoration alone to Akkadian, no attribution, no vision. This paper is the missing combination — multi-task attribution (period, genre, language, provenience) *and* vision, for Akkadian, for the first time. (This work — no prior Akkadian system combines the two)
+- Historian+model synergy is the field's own framing for why this matters, not just a metrics exercise. (Assael et al. 2022, Abstract, p.280 — 25%→72% with model assistance; Assael et al. 2025, p.141-142)
 
 ---
 
 ## 2. Related Work
 
-### 2.1 MLM with fine-tuned BERT (direct Akkadian precedent)
+### 2.1 Fine-tuned BERT for Akkadian
 
-- Lazar et al. 2021: mBERT fine-tuned on Akkadian transliteration outperforms a monolingual from-scratch Akkadian BERT by ~10%, and reassigns mBERT's 99 free `[unusedN]` slots to inject task-specific tokens without growing the embedding table — this project reuses that exact mechanism (2 slots for damage sentinels, not 99, since we don't need a full injected vocabulary the same way — see 2.2).
-  — Lazar et al. 2021, §5.4, p.4686 ("the zero-shot performance of a multilingual language model surpasses... by about 10%"); §4.2, p.4685 (`[unusedN]` mechanism).
-  — This work: `src/training/train_mbert.py` (`UNCLEAR_SIGN_TOKEN`/`UNKNOWN_GAP_TOKEN`, `learn_akkadian_tokens`/`inject_akkadian_tokens` — we actually go further than Lazar and inject 97 corpus-learned Akkadian WordPiece tokens into the remaining free slots, not just the 2 damage sentinels).
+- mBERT fine-tuned on Akkadian outperforms a from-scratch monolingual Akkadian BERT by ~10%. (Lazar et al. 2021, §5.4, p.4686)
+- Mechanism: mBERT's 99 free `[unusedN]` slots reassigned to inject task tokens without growing the embedding table — this project reuses the same mechanism (2 slots for damage sentinels, plus 97 corpus-learned Akkadian WordPiece tokens in the rest). (Lazar et al. 2021, §4.2, p.4685; this work — `train_mbert.py`)
+- Bidirectional context beats unidirectional on this exact task (LSTM full-context MRR 0.89 vs. context-before-only MRR 0.754) — the direct justification for a BERT-style encoder over an autoregressive decoder. (Fetaya et al. 2020, Table 2, p.22746)
 
-- Fetaya et al. 2020: direct Akkadian-domain evidence that bidirectional context beats unidirectional context on this exact task (LSTM with full context: MRR 0.89 vs. context-before-only: MRR 0.754) — the strongest single justification for a BERT-style encoder over an autoregressive decoder.
-  — Fetaya et al. 2020, Table 2, p.22746.
+### 2.2 Pythia → Ithaca → Aeneas
 
-### 2.2 Architecture-from-scratch lineage (Pythia → Ithaca → Aeneas)
+- Pythia: first deep-learning ancient-text restoration, BiLSTM, beat expert epigraphists (CER 30.1% vs. 57.3%). (Assael et al. 2019, p.6370)
+- Ithaca: adds geographic (84 regions, 70.8% top-1/82.1% top-3) and chronological (median 3-year error) attribution to restoration (26.3% CER, 61.8% top-1) — one shared torso, per-task shallow feedforward heads. Direct precedent for this project's own multi-head design. (Assael et al. 2022, Abstract p.280, Table 1 p.282)
+- Aeneas: T5+RoPE torso, vision branch (ResNet-8) concatenated with text — **only into the geographic-attribution head**; excluded from restoration (leakage risk) and dating (no measured gain). Direct precedent for scoping this project's own vision branch to `provenience_head` only — and this project independently re-derived the same conclusion via its own ablation, not just by copying the choice (§5). (Assael et al. 2025, Methods p.148)
 
-- Pythia (Assael et al. 2019): first deep-learning ancient-text restoration system, BiLSTM seq2seq, Greek epigraphy, character+word level. Outperformed expert epigraphists (CER 30.1% vs. 57.3%) — establishes the field's own baseline for "does ML beat human experts on this task," which Ithaca/Aeneas both later beat again.
-  — Assael, Sommerschield & Prag 2019, p.6370 (EMNLP-IJCNLP 2019 proceedings pagination — confirmed by reading the PDF directly, not just reused from Kyivan's own wording).
+### 2.3 Vision + cuneiform
 
-- Ithaca (Assael et al. 2022): adds geographic attribution (84 regions, 70.8% top-1 / 82.1% top-3 accuracy) and chronological attribution (median 3 years from ground truth) to restoration (26.3% CER, 61.8% top-1, 78.3% top-20 accuracy) — the direct architectural precedent for this project's own multi-head design (restoration + period + genre + language + provenience, jointly trained on one torso). Torso: stacked transformer blocks with sparse multihead attention, position info concatenated into the input representation; three shallow feedforward task heads read off the torso's final output.
-  — Assael et al. 2022, Abstract p.280, Table 1 p.282 (exact numbers above), p.281 (architecture, "the torso... three different task heads").
-  — This work: `src/training/train_mbert.py`'s `MBertMultiTask` — same principle (one shared encoder, per-task linear heads), Aeneas's fixed multi-task loss weighting reused directly (see 2.3).
+- Tablet *shape* alone (no text), classified by ResNet50 on 94,936 CDLI images, predicts historical period at 61% macro-F1 (vs. 8% for a decision-tree height/width baseline) — real period signal exists in images alone. Contrast with this project's own null result for `period_head` in a *joint* text+image model: text likely already saturates the period signal a fused image feature could add, unlike a vision-only setting where the image is the only signal available. (Kapon, Fire & Gordin 2024, Abstract p.1, §1 p.2; this work — `docs/final_results.md`, period macro-F1 stays inside the unconditioned noise range [0.856, 0.876] whether or not the image is attached)
+- Weakly-supervised cuneiform sign detection from tablet photos (aligning transliterations to images) is an established task, not a novel domain transfer. (Dencker et al. 2020, Abstract p.1)
+- AI-assisted Gilgamesh restoration succeeds on formulaic/parallel-attested lines, struggles on rare lexemes and damaged proper names — matches this project's own showcase-vs-random accuracy gap (53-55% vs. 63-64% top-1). (Mahmood & Panok 2025, Abstract p.99; this work — `results_final/`)
 
-- Aeneas (Assael et al. 2025): replaces Ithaca's torso with a deep narrow T5 decoder + rotary position embeddings, adds a vision branch (ResNet-8) concatenated with text embeddings **only for the geographical attribution head** — restoration explicitly excludes vision (leakage risk: masked positions' own image region isn't itself masked), dating excludes it because ablations showed no gain. This is the direct precedent for this project's own decision to scope the vision branch to `provenience_head` only, and — going further than just following the precedent — this project independently re-derived the same conclusion via its own controlled ablation (§5 below), on a corpus ~30x smaller and a different vision backbone (ResNet18/ImageNet-finetune vs. their ResNet8/from-scratch).
-  — Assael et al. 2025, Methods p.148 ("only the geographical attribution head incorporates the additional inputs from the vision network... excluded for the restoration task to prevent unintended information 'leakage'... omitted for the dating task because experiments showed no significant performance gains").
-  — This work: `docs/final_results.md` (own ablation, provenience macro-F1 0.725→0.768 reproduced across 2 runs; period/genre stayed inside the noise floor across 4 runs — see §5).
+### 2.4 Other Akkadian NLP (brief — different tasks, cited for field context only)
 
-### 2.3 Vision + cuneiform (new for this paper vs. the Kyivan draft — no image modality in Kyivan at all)
+- Sign→word transliteration from Unicode glyphs, RNN, up to 97% accuracy. (Gordin et al. 2020, Abstract p.1)
+- Akkadian→English NMT, both from glyphs and from transliteration (BLEU4 36.5/37.5). (Gutherz et al. 2023, Abstract p.1)
+- A 2025 shared task on lemmatization/token-prediction for Akkadian and Sumerian confirms this is an active benchmarking target for the field, not a one-off framing choice. (Gordin, Sahala, Spencer & Klein 2025, Abstract p.164)
+- Most recent (2026): bidirectional Akkadian↔English NMT + cuneiform rendering — different task/audience (composition, not restoration), doesn't overlap with this project's contribution. (Wang 2026, Abstract p.132)
 
-- Kapon, Fire & Gordin 2024: 94,936 CDLI tablet images classified by physical *shape* alone (no text) into historical period via ResNet50, reaching 61% macro-F1 (vs. 8% for a height/width-ratio decision-tree baseline) — direct evidence that tablet **shape carries real period signal** through a purely visual channel. Worth an explicit discussion-section contrast: their shape-only model finds a real period signal from images; this project's *joint* text+image model finds none for `period_head`. Plausible reconciliation: text alone (via language/orthography/genre cues mBERT already reads) may already saturate what period-signal exists, leaving nothing incremental for a jointly-fused image feature to add on top — unlike Kapon et al.'s pure-vision setting, where image is the *only* signal available, so pulling out even weak shape-period correlation shows up as a real gain there but not in a model that already has a much stronger channel (text) providing the same information.
-  — Kapon, Fire & Gordin 2024 (arXiv:2406.04039), Abstract p.1 (61% macro-F1, ResNet50, 94,936 images); §1 p.2 (8% decision-tree baseline, height-to-width ratio).
-  — This work: `docs/final_results.md` (period macro-F1 unconditioned range [0.856, 0.876] across 4 runs vs. conditioned 0.871/0.868 — inside the noise floor, no effect).
+### 2.5 Data sources
 
-- Dencker, Klinkisch, Maul & Ommer 2020 (PLOS ONE): weakly-supervised cuneiform *sign detection* in tablet photographs, aligning transliterations to images to bootstrap bounding-box training data without manual annotation — establishes that CDLI-scale tablet photography is usable for real computer-vision tasks on cuneiform specifically, not just a generic-object-detection domain transfer. Useful precedent for the image side of this project's own pipeline (ResNet on tablet photo crops), and a candidate future-work citation (their sign-localization output could in principle feed sign-level, not just tablet-level, visual features).
-  — Dencker et al. 2020, Abstract p.1, §Introduction p.1 (weak supervision via transliteration alignment).
-
-- Mahmood & Panok 2025 (Iraqi Literary and Cultural Review): AI-assisted reconstruction/translation specifically of Standard Babylonian Gilgamesh — reports the system "performs strongly on relatively formulaic lines and on passages with close parallels elsewhere in the epic... struggles... with rare lexical items, damaged proper names, and lines whose syntactic structure is uncertain." This independently corroborates this project's own qualitative finding in `results_final/predictions_demo_showcase.md`: restoration top-1 accuracy on the Gilgamesh/showcase set (53-55%) is meaningfully lower than on the random administrative-heavy test sample (63-64%), for exactly this reason (literary/damaged vs. formulaic/administrative).
-  — Mahmood & Panok 2025, Abstract p.99 ("performs strongly on relatively formulaic lines... struggles... with rare lexical items, damaged proper names").
-  — This work: `results_final/README.md` / `results_final/predictions_demo.md` vs. `predictions_demo_showcase.md` (aggregate top-1 accuracy figures).
-
-### 2.4 Other recent Akkadian NLP work (checked in detail this pass, previously flagged as unread)
-
-- Gordin, Gutherz, Elazary, Romach, Jiménez, Berant & Cohen 2020 (PLOS ONE): automatic transliteration/segmentation of Unicode cuneiform *glyphs* into words (RNN-based, up to 97% accuracy; the "Akkademia" toolkit). A different task from restoration (this converts sign images/Unicode to readable words, doesn't fill gaps or attribute), but establishes the sign→transliteration NLP pipeline this project's own dual text/`signs` representation sits downstream of.
-  — Gordin et al. 2020, Abstract p.1.
-
-- Gutherz, Gordin, Sáenz, Levy & Berant 2023 (*PNAS Nexus* 2(5):1-10): neural machine translation Akkadian→English, both from cuneiform Unicode glyphs directly (C2E, BLEU4 36.52) and from transliteration (T2E, BLEU4 37.47). Worth one sentence in Related Work as "other current deep-learning work on Akkadian" (translation, not restoration/attribution) — also independent evidence that a glyph-level representation (this project's `signs` column) is a modelable input on its own, not just a display artifact.
-  — Gutherz et al. 2023, Abstract/Significance Statement p.1.
-
-- EvaCun 2025 Shared Task (Gordin, Sahala, Spencer & Klein; *Proceedings of the Second Ancient Language Processing Workshop*, NAACL 2025, pp.164-172): a shared task specifically on **lemmatization and token prediction** (i.e., restoration) for Akkadian and Sumerian using LLMs. Directly supports an "the field has organized a shared task on this exact problem" framing in the Introduction — this project's restoration task is not a one-off framing choice, it is what the field itself is currently benchmarking.
-  — Gordin, Sahala, Spencer & Klein 2025, Abstract p.164.
-
-- TabletCraft (Wang 2026; *Proceedings of the 4th Workshop on Cross-Cultural Considerations in NLP*, C3NLP 2026, pp.132-136): bidirectional Akkadian↔English NMT (ByT5, 49.1/48.5 BLEU) plus a cuneiform sign renderer, aimed at letting non-specialists *compose* new cuneiform, not at restoration or attribution. Very recent (2026) and worth a citation for currency, but a different task/audience from this project — does not overlap with or scoop this project's contribution.
-  — Wang 2026, Abstract p.132.
-
-### 2.5 Data sources (cite as data provenance, not "related work" per se)
-
-- Chen et al. 2023 (CuneiML): supplementary source for Unicode cuneiform glyph segmentation and CDLI photo/bounding-box data — the basis for this project's vision branch.
-  — This work: `data/raw/cuneiml/CuneiMLv1.2.json`; `src/data_pipeline/prepare_cuneiml.py`.
-
-- Cobanoglu et al. 2024 (eBL data paper, *Journal of Open Humanities Data*): formal citation for the eBL Zenodo transliteration snapshot (`fragments.json`, Zenodo DOI 10.5281/zenodo.10018951) this project uses directly for text backfill and several showcase (Gilgamesh/Enuma Elish/Atrahasis/Hammurabi) fragments. ~25,000 tablets transliterated, 350,000+ lines, CC BY-NC-SA 4.0.
-  — Cobanoglu et al. 2024, Abstract p.1, §2.2 p.4 (dataset description), §Reuse Potential p.5 (350,000 lines, license).
-  — This work: `data/raw/cdli_bulk/ebl_fragments.json`; `src/data_pipeline/add_showcase_texts.py`.
+- CuneiML: supplementary source, Unicode glyph segmentation + CDLI photo/bbox data — basis of this project's vision branch. (Chen et al. 2023)
+- eBL: formal citation for the Zenodo transliteration snapshot (`fragments.json`, DOI 10.5281/zenodo.10018951) used directly for text backfill and showcase fragments; ~25,000 tablets, 350,000+ lines, CC BY-NC-SA 4.0. (Cobanoglu et al. 2024, Abstract p.1, §2.2 p.4, §Reuse Potential p.5)
 
 ---
 
 ## 3. Data
 
-### 3.1 Only Test A — decided, not open anymore
+- Only Test A. This project cannot build a Kyivan-style Test B (hide *real* editorial reconstructions, evaluate recovery): ORACC's raw markup distinguishes an editor's bracketed conjecture from a plainly-attested reading, but this project's parsing (`prepare_oracc.py`'s `extract_utf8`) does not preserve that distinction into the final corpus — by the time text reaches training, the two are indistinguishable. Retrofitting it is a new pipeline stage, out of scope. Report Test A only: standard 15% MLM masking on a held-out `test` split untouched during training/checkpoint selection. (This work — `src/data_pipeline/prepare_oracc.py`)
+- Editorial conjectures are kept in training text, not stripped — same choice as Aeneas, same reason (data scarcity). (Assael et al. 2025, Methods, "data circularity", p.147)
 
-This project cannot build a Kyivan-style Test B (hide *real* editorial reconstructions, evaluate whether the model recovers them). Reason, checked directly in code rather than assumed: `src/data_pipeline/prepare_oracc.py`'s `extract_utf8` walks ORACC's `gdl` sign-tree and emits resolved sign values (or `[#]`/`X` for the two damage cases we do track), but does not preserve *which* signs came from an editor's bracketed conjecture versus a plainly attested reading — that distinction exists in ORACC's raw markup but is not carried into this project's `signs`/`text` columns. By the time text reaches the final corpus, an editorially-restored span and a plainly-read span are indistinguishable. Retrofitting that distinction would mean re-parsing ORACC's bracket markup from scratch as a new pipeline stage — out of scope here. **Decision: this paper reports Test A only** (synthetic 15% MLM masking, on a held-out `test` split never touched during training or checkpoint selection) — say so explicitly in the paper rather than silently matching Kyivan's two-test-regime table shape with only one column filled in.
-  — This work: `src/data_pipeline/prepare_oracc.py` (`extract_utf8`); `results_final/` (the one eval regime actually run).
+**Corpus.** 60,050 documents: 51,974 from the primary ORACC + supplementary CuneiML merge, plus 8,076 from this project's own targeted backfill (CDLI bulk ATF/eBL rescue for tablets with text but no usable prior transliteration, balancing for underrepresented period/genre/language/provenience classes, and a curated Gilgamesh/Enuma Elish/Atrahasis/Hammurabi showcase set forced into the test split). 7,049 documents (11.7%) additionally have a reviewed photograph; the rest get an all-zero image placeholder at train time, the same design Aeneas uses for its own 95%-without-images majority. **The image is fed to the model for every one of these 7,049 tablets, but reaches only `provenience_head`** — say this explicitly here, not only in Methods. (This work — `docs/data_layout.md`)
 
-- Data circularity (training on text that already includes editors' own bracketed conjectures, whether or not we can later hide-and-re-predict them specifically) is still worth a sentence regardless of the Test A/B decision above — Aeneas quantifies this directly for their own corpus and elects to keep conjectures in, citing data scarcity; this project made the same choice (conjectures are not stripped before training) for the same reason, and should say so rather than leave it implicit.
-  — Assael et al. 2025, Methods, "The question of data circularity", p.147.
+**Metadata categories.** Raw CDLI/ORACC period/genre/provenience/language values are free text with inconsistent suffixes (e.g. `"Old Babylonian (ca. 1900-1600 BC)"`); mapped by substring match, not exact match, into a small fixed set per head — exact match silently dropped 30-58% of otherwise-valid records to "Unknown". Coarsened deliberately to keep each head's class count trainable at this corpus size, not to preserve every distinction CDLI itself makes (e.g. genre's "Literary & Scholarly" absorbs astrological/omen/ritual/mathematical/prayer texts alike):
+  - Period (9): Neo-Assyrian, Ur III, Old Babylonian, Old Assyrian, Middle Assyrian, Middle Babylonian, Neo-Babylonian, Third Millennium, Late Antiquity.
+  - Genre (6): Administrative, Lexical, Royal Inscriptions, Literary & Scholarly, Legal, Letters.
+  - Language (4): Akkadian, Sumerian, Bilingual, Peripheral/Other.
+  - Provenience (12): Nineveh, Umma, Girsu, Nippur, Puzriš-Dagan, Kanesh, Assur, Uruk, Ur, Ugarit, Sippar, Nimrud.
 
-### 3.2 Corpus composition (table)
+(This work — `prepare_hf_dataset.py`'s `map_period`/`map_genre`/`map_language`/`map_provenience`)
 
-Three-tier corpus, same "primary editorial source + supplementary glyph/image source" shape as Kyivan's own multi-collection table (NKRYA/birch-bark/Epigraphica/Polotsk/other), plus a third tier this project added itself (targeted backfill for underrepresented classes + a curated showcase set) that Kyivan's corpus has no equivalent of:
-
-| Source | Role | Documents |
-|---|---|---|
-| ORACC + CuneiML (merged, deduplicated) | Primary editorial corpus | 51,974 |
-| CDLI bulk ATF / eBL rescue (tablets with text but no usable prior transliteration) | Backfill | 126 |
-| Provenience-class balancing | Backfill | 962 |
-| Period/genre/language-class balancing | Backfill | 6,965 |
-| Showcase (Gilgamesh, Enuma Elish, Atrahasis, Hammurabi) | Curated, forced test split | 26 |
-| **Total** | | **60,050** |
-
-(counts as of this session; re-verify against `results_final/` before submission if the corpus changes again). Of these, 7,049 tablets additionally have a reviewed photo (the `vision` HF config) — a minority of the corpus, same "most examples get an all-zero image placeholder" design Aeneas itself uses, not unique to this project. State explicitly in this section, not only in Methods: **the image is fed to the model for every one of these 7,049 tablets, but it only reaches `provenience_head`** — the other three heads (period, genre, language) never see it, by architectural design (§4, §5), not because those tablets lack a photo.
-  — This work: `data/interim/{cdli_bulk,ebl_bulk,balance,text_balance,showcase}_documents.jsonl`; `docs/data_layout.md`.
-
-### 3.3 Metadata: four categorical heads, substring-mapped from raw catalogue strings
-
-Raw CDLI/ORACC period/genre/provenience/language values are free-text strings with inconsistent suffixes (e.g. `"Old Babylonian (ca. 1900-1600 BC)"`, `"Nineveh (mod. Kuyunjik)"`) — mapped by **substring match**, not exact match, into a small fixed category list per head (exact-match was tried first and silently dropped 30-58% of otherwise-valid records to "Unknown" because of these suffixes). The four fixed label sets actually used:
-
-| Head | Classes |
-|---|---|
-| Period (9) | Neo-Assyrian, Ur III, Old Babylonian, Old Assyrian, Middle Assyrian, Middle Babylonian, Neo-Babylonian, Third Millennium, Late Antiquity |
-| Genre (6) | Administrative, Lexical, Royal Inscriptions, Literary & Scholarly, Legal, Letters |
-| Language (4) | Akkadian, Sumerian, Bilingual, Peripheral/Other |
-| Provenience (12) | Nineveh, Umma, Girsu, Nippur, Puzriš-Dagan, Kanesh, Assur, Uruk, Ur, Ugarit, Sippar, Nimrud |
-
-Genre and period in particular fold several raw CDLI values into one class (e.g. genre's "Literary & Scholarly" absorbs astrological/astronomical/omen/school/ritual/incantation/extispicy/mathematical/scientific/prayer texts) — a deliberate coarsening to keep each head's class count trainable given the corpus size, not an attempt to preserve every distinction CDLI itself makes.
-  — This work: `src/data_pipeline/prepare_hf_dataset.py` (`map_period`, `map_genre`, `map_language`, `map_provenience`, and the `*_LABELS` constants directly above `label_to_idx`).
-
-### 3.4 Missing values: excluded from loss and metrics, not defaulted
-
-A raw value that doesn't match any known category (or is simply absent from the catalogue record) maps to `'Unknown'`, which `label_to_idx` converts to `-100` — PyTorch's standard `ignore_index`, excluding that row from **both** that head's loss term and its accuracy/F1 computation. This is the same principle Kyivan already uses for undated/dialect-unknown documents ("excluded... using a separate validity mask... rather than being assigned an arbitrary default"), independently arrived at here for a different reason (CDLI/ORACC catalogue incompleteness rather than genuinely unknowable ground truth) — worth stating as parallel design, not identical motivation. Current missing-value rates across the full corpus: period 2.0%, genre 11.5%, language 18.1%, provenience 23.5% (provenience is both the head with the most classes and the most catalogue gaps — CDLI's own findspot field is the least consistently filled of the four).
-  — This work: `src/data_pipeline/prepare_hf_dataset.py` (`label_to_idx`); corpus-wide count, `results_final/`-adjacent tooling (see reproduce command below).
-
-```bash
-uv run python -c "
-from datasets import load_dataset
-ds = load_dataset('AlexSychovUN/Iskander-Dataset', 'documents')
-for task in ('period','genre','language','provenience'):
-    n = sum(sum(1 for v in ds[s][f'{task}_labels'] if v == -100) for s in ('train','validation','test'))
-    total = sum(len(ds[s]) for s in ('train','validation','test'))
-    print(task, n, f'{n/total:.1%}')
-"
-```
-
-### 3.5 Text-level gaps: two damage signals, distinct from missing metadata
-
-Separately from missing *metadata* (§3.4), the transliteration text itself carries two real-damage signals, mapped to dedicated sentinel tokens (mBERT's own reserved `[unusedN]` slots, following Lazar et al. 2021's mechanism — §2.1) and excluded from both masking targets and model outputs, since a position marking genuinely unrecoverable content has no ground truth to train against:
-- a single unclear sign (`x` in transliteration) — present in 32.3% of documents, 9.26% of word-tokens;
-- a gap of unknown length (`...` in transliteration) — present in 16.5% of documents, 2.01% of all characters.
-
-Structurally the same two-tier "single vs. unknown-length gap" convention Kyivan uses (`[-]` / `[#]`) and Aeneas uses (`-` / `#`) — independently convergent design across three unrelated ancient-language restoration projects, worth stating as such rather than "we copied it."
-  — Assael et al. 2025, Methods, "Latin Epigraphic Dataset", p.148.
-  — This work: `src/training/train_mbert.py` (`mark_damage_signals`, `ELLIPSIS_RE`, `LONE_X_RE`); fresh corpus-wide count this session (see reproduce command below).
-
-```bash
-uv run python -c "
-from datasets import load_dataset
-import re
-ds = load_dataset('AlexSychovUN/Iskander-Dataset', 'documents')
-LONE_X_RE, ELLIPSIS_RE = re.compile(r'\bx\b'), re.compile(r'\.\.\.+')
-texts = [t for s in ('train','validation','test') for t in ds[s]['text']]
-n = len(texts)
-print('x in', sum(1 for t in texts if LONE_X_RE.search(t)) / n)
-print('gap in', sum(1 for t in texts if ELLIPSIS_RE.search(t)) / n)
-"
-```
+- A value matching no known category (or absent from the record) is `Unknown`, mapped to `-100` and excluded from both that head's loss and its accuracy/F1 — never defaulted. Current missing rate: period 2.0%, genre 11.5%, language 18.1%, provenience 23.5% (provenience has both the most classes and the least consistently filled catalogue field). (This work — `prepare_hf_dataset.py`'s `label_to_idx`)
+- Two damage sentinels in the text itself, distinct from missing metadata: a single unclear sign (`x`, present in 32.3% of documents / 9.26% of word-tokens) and a gap of unknown length (`...`, 16.5% of documents / 2.01% of characters) — mapped to reserved mBERT token slots, excluded from masking targets and outputs alike. Same two-tier convention as Aeneas's own `-`/`#`. (Assael et al. 2025, Methods, p.148; this work — `train_mbert.py`'s `mark_damage_signals`)
 
 ---
 
 ## 4. Methods
 
-- Torso: `bert-base-multilingual-cased`, fine-tuned (not from scratch) — this is the one significant divergence from Kyivan's own from-scratch character-level torso, and worth explicitly justifying rather than glossing over: Akkadian's available corpus (tens of thousands of lines) is far smaller than what a from-scratch transformer needs, matching exactly why Lazar et al. 2021 chose mBERT over a monolingual model (§2.1 above) — this project made and empirically confirmed the same choice for the *same reason*, not by default.
-  — This work: `results_final/metrics_untrained.json` vs `metrics_text.json` (MLM MRR 0.512 zero-shot → 0.797 fine-tuned — shows fine-tuning is doing real, substantial work on top of mBERT's own pretraining, consistent with Lazar's framing).
-
-- Four metadata heads (period/genre/language/provenience) trained jointly with the MLM objective, one shared encoder — direct analog of Ithaca/Aeneas's own multi-head torso design (§2.2), extended from their 2 attribution tasks (region, date) to 4 (this project has no genre/language equivalent in Ithaca/Aeneas, since those are Akkadian-specific — Ithaca's ancient Greek corpus doesn't carry the Sumerian/Akkadian bilingual-corpus language-attribution problem, and it has no separate genre head at all).
-  — This work: `src/training/train_mbert.py` (`MBertMultiTask`).
-
-- Loss weighting: MLM=3.0, each metadata head=1.0 (`meta_weight`, raised this session from an earlier 0.25 after finding it under-weighted metadata relative to Aeneas's own fixed ratio) — numerically close to, not copied from, Aeneas's own `3·restoration + 2·region + 1.25·date`.
-  — Assael et al. 2025, Methods, p.148.
-  — This work: `src/training/train_mbert.py` (`--meta_weight`; see `docs/final_results.md` for the before/after metadata macro-F1 comparison).
-
-- Vision branch: ResNet18 (ImageNet-initialized, jointly fine-tuned — `vision_init=finetune`), LayerNorm'd, concatenated with `[CLS]`, feeding **only** `provenience_head` — architecturally identical in spirit to Aeneas's ResNet-8-into-geography-head design (§2.2), differing in backbone choice (ResNet18/finetune vs. their ResNet8/from-scratch, since this project's ~5.3k-image corpus is two orders of magnitude smaller than Aeneas's and a full from-scratch CNN was found to overfit — matches Kapon et al.'s own point that a fully from-scratch shape classifier needs real data volume to work, §2.3) and augmentation strength (calibrated down from Aeneas's own 30°/10° rotation/shear after finding it clipped real tablet content on tight, human-reviewed crops — see `docs/final_results.md`/git history for the visual audit that motivated this).
-  — This work: `src/training/train_mbert.py` (`IMG_TRANSFORM_TRAIN`, `MBertMultiTask.forward`); commits on ImageNet normalization/LayerNorm/augmentation tuning (session 2026-08-13).
+- Torso: `bert-base-multilingual-cased`, fine-tuned, not from scratch — same reasoning as Lazar et al. 2021's own choice (corpus too small for a from-scratch transformer), confirmed empirically here too (untrained MLM MRR 0.512 → fine-tuned 0.797). (This work — `results_final/metrics_untrained.json` vs `metrics_text.json`)
+- Four metadata heads (period/genre/language/provenience) jointly trained with the MLM objective on one shared encoder — extends Ithaca/Aeneas's 2-head design (region, date) to 4; no genre/language equivalent exists in their Greek/Latin setting. (This work — `MBertMultiTask`)
+- Loss weighting MLM=3.0, each metadata head=1.0 — close to, not copied from, Aeneas's `3·restoration + 2·region + 1.25·date`. (Assael et al. 2025, Methods, p.148; this work — `--meta_weight`)
+- Vision branch: ResNet18 (ImageNet-init, jointly fine-tuned), LayerNorm, concatenated with `[CLS]`, into `provenience_head` only — same principle as Aeneas's ResNet-8→geography design, different backbone (ResNet18/finetune vs. their ResNet8/from-scratch — this project's corpus is two orders of magnitude smaller, a from-scratch CNN overfit) and lighter augmentation (Aeneas's own 30°/10° rotation/shear clipped real content on this project's tight, human-reviewed crops; capped at 15°/5° after a visual check). (This work — `train_mbert.py`)
 
 ---
 
 ## 5. Results
 
-Pull exact numbers from `results_final/` (test split) — do not reuse validation-split numbers quoted earlier in the project's history, and do not reuse the pre-backfill numbers that were in the deleted diploma outline's old §5.2 (corpus has grown substantially since).
+**Metrics to report** (decided): MLM top-1/top-3/top-5 accuracy + MRR for restoration (matches Lazar et al. 2021's own metric choice exactly, direct comparability); accuracy + macro-F1 for each of the 4 metadata heads (macro-F1 is load-bearing given severe class imbalance — accuracy alone hides collapsed minority classes, see the untrained baseline). **Not** adding CER: it fits a character-generation setup (Ithaca/Aeneas/Kyivan all produce open-length text); this project's task is single-position top-1 prediction over a fixed vocabulary, already exactly Lazar's own MRR/Hit@k framing — CER would need new code (the from-scratch track's CER implementation was deleted with that track) for a metric that duplicates what MRR/Hit@k already show here.
 
-- Headline comparison table: untrained / text-only / vision(provenience), all four metadata heads' accuracy+macro-F1, MLM MRR/Hit@k. Source: `results_final/README.md`'s own table (already built, just needs transcribing into the paper's own table format, Kyivan-style).
-- Provenience vision effect, reproduced across 2 independent runs, clean separation from the noise floor established via `language_head` (never image-conditioned in any run) — full evidence and exact noise-floor reasoning in `docs/final_results.md`. This is the paper's one genuinely new empirical result beyond replicating Ithaca/Aeneas/Lazar: not "we followed Aeneas's architecture," but an independent re-derivation of the *same* provenience-only conclusion via a controlled, noise-floor-aware ablation, on a corpus far smaller than Aeneas's own.
-- Per-class breakdown (where the provenience gain concentrates: weak/small classes — Nimrud +0.241, Ur +0.102, Assur +0.034 — while language stays flat to ±0.002 per class) is a stronger, finer-grained piece of evidence than the aggregate number alone and is worth its own table or figure, not just prose — already computed, see `docs/final_results.md` §5.4 (in the now-deleted diploma outline; re-pull the underlying numbers from `results_final/metrics_text.json` / `metrics_vision.json`'s per-class sections directly for the paper, don't cite the deleted file).
-- Qualitative restoration examples: `results_final/predictions_demo.md` / `predictions_demo_showcase.md` are exactly the kind of worked examples Kyivan's own eventual Table (`tab:testab`) and prose around it want to be paired with — the showcase file in particular (Gilgamesh, real photo + line-by-line cuneiform/transliteration/translation) is strong figure material for the paper, directly parallel to Ithaca's Fig. 1/Fig. 2 worked-example figures and to Kyivan's own planned pipeline figure.
-
----
-
-## 6. Conclusion (draft talking points, expand into prose last)
-
-- This is, to our knowledge, the first system to combine Ithaca/Aeneas-style multi-task attribution (period, genre, language, provenience) with masked-token restoration **and** a vision-conditioned head, for Akkadian specifically — Lazar et al. 2021 did restoration only; Aeneas did vision+attribution but for Latin, at a much larger data scale, and without a genre/language task.
-- The provenience-vision result is not just "we replicated Aeneas's architectural choice" — it is an independent confirmation, via a controlled ablation with an explicit noise floor, on a completely different corpus scale (~5.3k vs. ~176k images) and vision backbone, that the effect Aeneas reported for Latin geography also holds for Akkadian provenience. Cross-corpus, cross-architecture agreement is itself evidence the effect is a real property of the data (tablet material/shape/photographic convention correlating with findspot), not an artifact of one paper's specific pipeline.
-- Open honest limitation to state, not hide: the from-scratch character-level architecture (the Kyivan-style track) was tried for this project and abandoned as unproductive relative to fine-tuned mBERT at comparable training cost — worth one sentence acknowledging this was tested, not omitted from consideration.
+- Headline: untrained / text-only / vision(provenience), all four heads + MLM MRR/Hit@k, test split. (This work — `results_final/README.md`)
+- Provenience vision effect reproduced across 2 independent runs, clean of the noise floor established via `language_head` (never image-conditioned). The one genuinely new result beyond replicating prior work: independent re-derivation of Aeneas's own provenience-only finding, on a corpus ~30x smaller. (This work — `docs/final_results.md`)
+- Per-class breakdown: the provenience gain concentrates in the weakest classes (Nimrud +0.241, Ur +0.102, Assur +0.034) while language stays flat to ±0.002 per class — finer, stronger evidence than the aggregate number. (This work — `results_final/metrics_{text,vision}.json`)
+- Qualitative examples: `results_final/predictions_demo_showcase.md` (Gilgamesh, real photo + line-by-line cuneiform/transliteration/translation) is strong figure material, parallel to Ithaca's own Fig. 1/2 worked examples.
 
 ---
 
-## Resolved this pass (previously open)
+## 6. Conclusion
 
-- ~~Test-B-style real-reconstruction eval~~ — **decided: Test A only**, see §3.1. Checked directly in `prepare_oracc.py`: this project's pipeline does not preserve which spans were editorial bracket-restorations vs. plainly attested, so a real Test B isn't buildable from the current corpus without a new parsing stage.
-- ~~Pythia's exact page~~ — verified by reading `papers/pythia.pdf` directly: p.6370 (EMNLP-IJCNLP 2019 proceedings pagination).
-- ~~The 5 unread papers~~ — all read and cited with verified pages in §2.4: Gordin et al. 2020, Gutherz et al. 2023, EvaCun 2025 Shared Task, TabletCraft (Wang 2026). All four are genuinely relevant Akkadian NLP context, none scoop this project's own restoration+attribution+vision combination.
+- First system combining Ithaca/Aeneas-style multi-task attribution with restoration *and* a vision-conditioned head, for Akkadian. Lazar et al. 2021 did restoration only; Aeneas did vision+attribution for Latin, at far larger scale, without genre/language.
+- The provenience-vision result is cross-corpus, cross-architecture confirmation of Aeneas's own finding (~5.3k vs. ~176k images, ResNet18/finetune vs. ResNet8/from-scratch) — evidence the effect is a real property of the data, not one paper's pipeline artifact.
+- State plainly: the from-scratch character-level architecture was tried and abandoned as unproductive relative to fine-tuned mBERT at comparable cost.
 
-## What we still need to decide (not yet resolved — flagged, not silently assumed)
+---
 
-1. **CER metric.** Kyivan reports CER (Levenshtein-based, per-gap) alongside top-k accuracy; this project's `results_final/` currently reports only top-k/MRR (matching Lazar et al.'s own metric set), not CER. `src/analysis/evaluate.py`'s CER code existed for the now-deleted from-scratch track — check whether it's reusable for the mBERT models or needs rebuilding, and decide whether CER is worth adding to match Kyivan's own metric table shape.
-2. **Dialect/date-bin framing.** Kyivan bins dates into 20 fifty-year bins and dialects into 4 macro-dialects, each with an explicit "excluded from loss if unreliable" masking convention (the same principle this project uses for its 4 heads, see §3.4 — worth citing as parallel design in Methods too, not only in Data). This project's period/provenience/genre/language heads use a different labeling scheme (CDLI/ORACC's own category strings, mapped via `map_period`/`map_genre`/etc., not a from-scratch binning system) — worth a sentence in Methods contrasting the two approaches (categorical CDLI period buckets vs. Kyivan's own uniform 50-year bins) rather than silently presenting them as equivalent.
-3. **Author list / venue.** Not this document's call — flagging only because the paper's framing (co-authored, Kyivan-style) implies a specific venue/audience that should shape how much of the above actually gets included vs. trimmed for length.
+## Still open
+
+1. **Dialect/date-bin framing vs. Kyivan's bins.** Not this paper's concern directly, but worth confirming in Methods that this project's categorical CDLI-derived buckets (not a from-scratch uniform binning) are stated as a deliberate choice, not left ambiguous.
+2. **Venue/length target.** Determines how much of the above survives — decide before drafting full prose.
