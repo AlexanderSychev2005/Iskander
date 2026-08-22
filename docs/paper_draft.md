@@ -68,6 +68,8 @@ Our corpus draws on two external sources beyond ORACC's own catalogue metadata. 
 
 ## 4. Methods
 
+**[Figure 1: architecture diagram — see "Figures & Tables" section below for the full spec.]**
+
 Our encoder is `bert-base-multilingual-cased`, fine-tuned rather than trained from scratch, for the same reason Lazar et al. (2021) give for the same choice: the available Akkadian corpus is orders of magnitude smaller than what a competitive from-scratch transformer requires. We confirm this empirically for our own corpus (Section 5): masked-token-prediction mean reciprocal rank rises from 0.512, for an otherwise identical but un-finetuned model, to 0.797 after finetuning — fine-tuning does substantial additional work beyond what mBERT's own pretraining alone provides.
 
 Four classification heads — period, genre, language, provenience — are trained jointly with the masked-language-modeling objective on one shared encoder, following the same shared-torso, per-task-head design as Ithaca and Aeneas (Assael et al. 2022; 2025), extended from their two attribution tasks (region, date) to four; genre and language have no direct equivalent in Ithaca/Aeneas's Greek/Latin setting. Task losses are weighted 3.0 for the masked-language-modeling objective and 1.0 for each metadata head — close to, though not copied from, Aeneas's own fixed weighting of 3 for restoration, 2 for region, and 1.25 for date (Assael et al. 2025).
@@ -80,16 +82,68 @@ For tablets with a photograph, we add a vision branch: a ResNet18 backbone, init
 
 **Metrics.** We report mean reciprocal rank and top-1/top-3/top-5 accuracy for masked-token restoration, matching Lazar et al. (2021)'s own metric choice for direct comparability, and accuracy alongside macro-averaged F1 for each of the four classification heads — accuracy alone can mask collapsed performance on minority classes under the severe class imbalance described in Section 3, which our untrained baseline illustrates directly (non-trivial accuracy from majority-class prediction alone, macro-F1 near zero). We do not report character error rate: CER is suited to evaluating open-ended text generation of unknown length, as in Ithaca and Aeneas; our task instead predicts a single token from a fixed vocabulary at each masked position, which the metrics above already capture directly.
 
-**Headline comparison.** On the held-out test split, the provenience-conditioned model reaches macro-F1 0.768 against a text-only 0.727 (+0.041). [Insert the full untrained / text-only / vision(provenience) table from `results_final/README.md` here — other numbers not yet transcribed into this draft, pull at write time.]
+**Headline comparison.** On the held-out test split, the provenience-conditioned model reaches macro-F1 0.768 against a text-only 0.727 (+0.041). **[Table 1 — see spec below; pull the full untrained/text-only/vision(provenience) numbers from `results_final/README.md` at write time, not from this draft.]**
 
 **The provenience-vision effect.** This is not a single-run artifact: on the validation split (used during development, not the number reported above), the same provenience-conditioned configuration was trained twice independently and reached macro-F1 0.766 and 0.764 — 0.002 apart — against a validation-split text-only baseline of 0.725. Both independent runs clear the noise floor established using the language head, which never receives the image in any run, yet whose own macro-F1 varies by as much as 0.05 between otherwise-identical runs from random initialization alone. Repeating the same conditioning experiment for period and genre, individually and jointly, shows no corresponding effect for either: both remain within the range spanned by their own unconditioned runs. This is, to our knowledge, an independent confirmation — on a corpus roughly thirty times smaller than Aeneas's, and with a different vision backbone — of Aeneas's own finding that vision conditioning benefits geographic attribution specifically, and not other attribution tasks (Assael et al. 2025).
 
-**Per-class breakdown.** The provenience gain is not distributed evenly across classes: it concentrates in the classes with the fewest training examples (Nimrud, F1 +0.241; Ur, +0.107; Assur, +0.037). For contrast, three of the language head's four classes move by no more than ±0.002 in F1; the exception, Bilingual, moves by -0.026, but it is also the smallest class by far (38 examples), consistent with sampling noise rather than a systematic effect. [Numbers as of the current `results_final/metrics_{text,vision}.json` — re-pull if these files change again before submission.]
+**Per-class breakdown.** The provenience gain is not distributed evenly across classes: it concentrates in the classes with the fewest training examples (Nimrud, F1 +0.241; Ur, +0.107; Assur, +0.037). For contrast, three of the language head's four classes move by no more than ±0.002 in F1; the exception, Bilingual, moves by -0.026, but it is also the smallest class by far (38 examples), consistent with sampling noise rather than a systematic effect. **[Figure 2 — see spec below. Numbers as of the current `results_final/metrics_{text,vision}.json` — re-pull if these files change again before submission.]**
 
-**Qualitative examples.** [Reference `results_final/predictions_demo_showcase.md` for the worked Gilgamesh example figure — photograph, line-by-line cuneiform/transliteration/translation, and both models' predictions side by side.]
+**Qualitative examples.** **[Figure 3 — the P387407 worked example (photo + cuneiform + transliteration), and Figure 4 — a restoration example, both see spec below.]**
 
 ---
 
 ## 6. Conclusion
 
 We present, to our knowledge, the first system to combine Ithaca/Aeneas-style multi-task attribution with masked-token restoration and a vision-conditioned head for Akkadian. Where Lazar et al. (2021) established restoration alone for this language, and Aeneas established vision-conditioned attribution for Latin at a substantially larger data scale, we combine both directions and add two attribution tasks — genre and language — with no direct analogue in prior epigraphic systems. Our central empirical finding — that a tablet's photograph benefits provenience attribution specifically, and not period or genre attribution — independently reproduces Aeneas's own finding for a structurally different language, script, and corpus scale, evidence that the effect reflects a genuine property of the underlying data (tablet material, shape, and photographic convention correlating with findspot) rather than an artifact of one project's pipeline. We also report, without omission, that an alternative from-scratch character-level architecture was built and evaluated for this project and found unproductive relative to fine-tuned mBERT at comparable training cost.
+
+---
+
+## Figures & Tables — what goes where, and what to draw
+
+Four figures, one table, one optional table. Metrics get inserted later (marked `[...]`) — this section is about *content and layout*, not final numbers.
+
+### Figure 1 — Architecture diagram (Methods, placed where the architecture is described — matches Kyivan's own placement of its pipeline figure)
+
+**Important difference from both reference images you attached: our encoder is plain `bert-base-multilingual-cased` — 12 layers, absolute learned position embeddings (added once at the input, summed with the token embeddings), not 16 layers and not RoPE.** RoPE belongs to Kyivan's own from-scratch model and to Aeneas's T5-style decoder torso — neither applies to us. Don't relabel our encoder box "RoPE" or draw it "×16"; label it plainly and use "×12". We also have no gap-expansion mechanism (Kyivan's Figure 2/"Handling the unknown length gap") — our model treats an unknown-length gap as a single token, not something a head iteratively extends — so there is no second diagram to draw there; only Figure 1 is needed for the architecture.
+
+Three columns, left to right, same layout family as both reference images:
+
+**Left column — "Input":**
+- A "Text" row: a short real transliteration snippet containing one `x` and one gap, e.g. `um-ma i-din-{d}suen-ma x-bi₂-ma ... a-na zi-nu-u₂` (pull a real short one from the corpus rather than inventing one, to stay accurate). Directly underneath it, in a lighter/smaller style (like Kyivan's normalized-text row under its manuscript-script row), show the *actual model input* after preprocessing: the same string with `x` replaced by one reserved token (e.g. `[UNCLEAR]`) and `...` replaced by another (e.g. `[GAP]`) — label this row "after `mark_damage_signals`" so it's clear this, not the raw string above it, is what gets tokenized.
+- Optionally, above or beside the text rows, the same line's cuneiform signs (Unicode glyphs) for human readability — but caption it clearly as *not* a separate model input; the model only ever consumes the transliteration row. This avoids implying a second, glyph-level input channel that doesn't exist.
+- An "Image" row below/beside: a tablet photo box → arrow into a "ResNet18 (ImageNet, fine-tuned)" box → arrow into a small "LayerNorm" box. Caption: present for ~11.7% of tablets; the rest use an all-zero placeholder of the same shape (a one-line note is enough, don't draw a separate placeholder box).
+
+**Middle column — "mBERT Encoder":**
+- One box labeled `mBERT Encoder (bert-base-multilingual-cased) ×12`.
+- Inside, one representative transformer block (matches the Kyivan box-in-a-box style), top to bottom: `Token + Position Embeddings (absolute, learned)` → `Multi-head self-attention` → `Add & Normalize` → `Feed Forward` → `Add & Normalize` → loop arrow back to the top labeled `×12`.
+- The block's final output splits into two things used downstream: (a) the full per-token sequence (feeds Restoration), and (b) the `[CLS]` token specifically (feeds the four classification heads).
+
+**Right column — "Output" — five boxes, not four:**
+1. `Restoration (MLM head)` — feeds from the full per-token sequence output (not `[CLS]`). Show one masked position resolving to its predicted token, e.g. `[UNCLEAR] → suen`.
+2. `Period` — feed-forward from `[CLS]` → one of 9 classes. Draw as a small bar chart with 2-3 candidate bars, one clearly tallest, matching the Region/Date bar-chart style in both reference images.
+3. `Genre` — same shape, `[CLS]` → 6 classes.
+4. `Language` — same shape, `[CLS]` → 4 classes.
+5. `Provenience` — same shape, but its input arrow is drawn from `[CLS] ⊕ image feature` (a small "concat" symbol, ⊕ or similar) — **this is the one head with two incoming arrows, and it must visibly differ from the other three, which take `[CLS]` alone.** This is the paper's central architectural point; if the diagram doesn't make this visible at a glance, it isn't doing its job.
+
+Caption should state explicitly: "The image reaches only the provenience head; period, genre, and language classify from text alone" — don't leave this implicit in the picture.
+
+### Figure 2 — Per-class provenience gain (Results)
+
+A grouped bar chart, not a table: x-axis = the 12 provenience classes ordered by training-set size (largest to smallest, or smallest to largest — pick one and say so in the caption), one bar pair per class (text-only F1, vision F1), so the reader can see the gain visibly grow toward the right (smallest classes). Optionally overlay a third, thin reference bar or dashed line for the language head's F1 delta per class (or just its range) as the "this could be noise" baseline the text argues against — a visual version of the noise-floor argument in Section 5. If a third series makes it too busy, drop it and keep the noise-floor comparison in prose only (already written above).
+
+### Figure 3 — Worked example: what the raw material actually looks like (you're building this one)
+
+Photo of P387407 (or its reviewed 224×224 crop, whichever reads better at print size) beside its cuneiform signs and its transliteration, line by line — same spirit as your own planned figure. Purpose: let a reader unfamiliar with cuneiform see, once, what "signs" and "transliteration" concretely are before Section 5 starts talking about restoring them. Source material already exists: `results_final/predictions_demo_showcase.md`'s P387407 entry has the photo, the per-line cuneiform, and the per-line transliteration already aligned — build the figure from that, not from scratch.
+
+### Figure 4 — A restoration example (design later, flagged not forgotten)
+
+The Aeneas-style "before/after" figure (their bronze-diploma example) needs a specific *masked → restored* pair, ideally one where the model gets it right and it's visually legible at small size. Candidates to design from once ready: any row from `results_final/predictions_demo.md`/`predictions_demo_showcase.md` with a short masked span and a correct top-1 restoration. Decide later whether to show text-only, vision, or both side by side for the same example (only useful if the example happens to be a case where they disagree).
+
+### Table 1 — Headline results (Results section)
+
+Rows: `mlm_mrr`, `mlm_top5_acc`, `period macro-F1`, `genre macro-F1`, `language macro-F1`, `provenience macro-F1`. Columns: untrained, text-only, vision(provenience). Pull directly from `results_final/README.md`'s own table at write time — do not hand-copy into this draft file first.
+
+### Table 2 (optional) — Corpus composition
+
+Not decided as necessary (Section 3's prose already states source/count/image-count inline, Aeneas-style, deliberately not as a table) — but if reviewers/co-author prefer a Kyivan-style visible source table for parity with the Slavic paper, one row per source (ORACC+CuneiML merged; CDLI-bulk/eBL backfill; showcase) with a documents column would suffice, no need for the finer 5-way backfill breakdown in the main text.
+
